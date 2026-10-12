@@ -1,603 +1,721 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CyberNeon Portal · Hand Gesture Filters</title>
-    <!-- Tailwind via CDN + custom tweaks -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- MediaPipe Hands & Camera Utils -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <style>
-        /* Custom glow & scanline effects */
-        body {
-            background: radial-gradient(circle at 20% 30%, #0b0e14, #030405);
-            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal hands - gesture-controlled camera effects</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: { ink: '#08061a', panel: '#110c2a', edge: '#2b2257', neon: '#3df5ff', magenta: '#ff3df0', amber: '#ffb454' },
+        fontFamily: {
+          sans: ['Sora', 'system-ui', 'sans-serif'],
+          mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace']
         }
-        .hud-panel {
-            backdrop-filter: blur(8px);
-            background: rgba(10, 15, 25, 0.7);
-            border: 1px solid rgba(0, 255, 255, 0.25);
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.15);
-        }
-        .gesture-badge {
-            background: rgba(0, 200, 255, 0.15);
-            border-left: 3px solid #00ffff;
-            text-shadow: 0 0 8px rgba(0, 255, 255, 0.7);
-        }
-        .video-container {
-            box-shadow: 0 0 35px rgba(0, 180, 255, 0.3);
-            border: 1px solid rgba(0, 255, 255, 0.3);
-            border-radius: 1.25rem;
-            overflow: hidden;
-            position: relative;
-        }
-        /* Canvas overlay absolute */
-        #overlayCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 20;
-        }
-        /* Status text subtle glow */
-        .glow-text {
-            text-shadow: 0 0 6px #00ffff, 0 0 12px #0088ff;
-        }
-        .log-entry {
-            border-left: 2px solid #00ccff;
-            padding-left: 8px;
-            margin-bottom: 4px;
-            font-size: 0.8rem;
-            color: #b0e0ff;
-        }
-        /* Thumbnail controls */
-        .ctrl-btn {
-            transition: all 0.2s ease;
-            background: rgba(20, 30, 45, 0.8);
-            border: 1px solid rgba(0, 255, 255, 0.4);
-        }
-        .ctrl-btn:hover {
-            background: rgba(0, 200, 255, 0.25);
-            box-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
-        }
-        .ctrl-btn.active {
-            background: #00aaff;
-            color: #000;
-            border-color: #ffffff;
-            box-shadow: 0 0 18px #00aaff;
-        }
-    </style>
+      }
+    }
+  };
+</script>
+
+<!-- Google MediaPipe Hands (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+
+<style>
+  html { color-scheme: dark; }
+  body { background: radial-gradient(1200px 600px at 80% -10%, rgba(255,61,240,.10), transparent 60%), radial-gradient(900px 500px at 0% 0%, rgba(61,245,255,.08), transparent 55%), #08061a; }
+  .fbtn { --c: #fff; border: 1px solid #2b2257; background: rgba(255,255,255,.03); transition: border-color .15s, box-shadow .15s, background .15s; }
+  .fbtn:hover { border-color: #4a3f8a; }
+  .fbtn[aria-pressed="true"] { border-color: var(--c); background: rgba(255,255,255,.07); box-shadow: 0 0 0 1px var(--c) inset, 0 0 28px -10px var(--c); }
+  .fbtn:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid #3df5ff; outline-offset: 2px; }
+  input[type=range] { accent-color: #3df5ff; }
+  #log::-webkit-scrollbar { width: 6px; }
+  #log::-webkit-scrollbar-thumb { background: #2b2257; border-radius: 3px; }
+  kbd { font-family: 'IBM Plex Mono', monospace; font-size: 11px; border: 1px solid #2b2257; border-radius: 4px; padding: 0 5px; color: #9a94c8; }
+</style>
 </head>
-<body class="min-h-screen text-white flex items-center justify-center p-4">
 
-<div class="max-w-5xl w-full flex flex-col items-center gap-4">
-    <!-- Header / Title -->
-    <div class="flex items-center justify-between w-full px-2">
-        <h1 class="text-2xl md:text-3xl font-bold tracking-tight glow-text flex items-center gap-2">
-            <span class="text-cyan-400">⚡</span> CYBER NEON <span class="text-cyan-400">PORTAL</span>
-        </h1>
-        <div class="text-xs text-cyan-300/70 uppercase tracking-widest">hand‑tracked AR filters</div>
+<body class="min-h-screen bg-ink font-sans text-slate-200 antialiased">
+<div class="mx-auto grid max-w-[1440px] gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_350px] lg:p-6">
+
+  <!-- ============ Stage ============ -->
+  <section class="min-w-0">
+    <header class="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Portal hands</h1>
+        <p class="mt-1 text-sm text-slate-400">Frame the air with both hands to open a portal. Switch effects with one-hand gestures.</p>
+      </div>
+      <button id="stopBtn" class="hidden rounded-lg border border-edge px-3 py-2 text-sm text-slate-300 hover:border-slate-500">Stop camera</button>
+    </header>
+
+    <div id="stage" class="relative w-full overflow-hidden rounded-2xl border border-edge bg-black shadow-[0_0_90px_-35px_rgba(61,245,255,.45)]" style="aspect-ratio:16/9">
+      <video id="video" playsinline muted autoplay class="pointer-events-none absolute h-px w-px opacity-0"></video>
+      <canvas id="view" class="absolute inset-0 h-full w-full"></canvas>
+
+      <!-- HUD: status -->
+      <div class="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur">
+        <span id="dot" class="h-2 w-2 rounded-full" style="background:#64618a"></span>
+        <span id="statusText">Camera off</span>
+        <span id="fpsText" class="font-mono text-slate-400"></span>
+      </div>
+
+      <!-- HUD: active filter -->
+      <div class="pointer-events-none absolute right-3 top-3 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur">
+        <span class="text-slate-400">Effect</span>
+        <span id="badgeDot" class="h-2 w-2 rounded-full" style="background:#e6e4ff"></span>
+        <span id="badgeText" class="font-medium">Normal</span>
+      </div>
+
+      <!-- HUD: transient toast -->
+      <div class="pointer-events-none absolute inset-x-0 top-16 flex justify-center">
+        <span id="flashText" class="rounded-full border bg-black/70 px-4 py-1.5 text-sm font-medium opacity-0 backdrop-blur"></span>
+      </div>
+
+      <!-- HUD: readout + hint -->
+      <pre id="readout" class="pointer-events-none absolute bottom-16 left-3 hidden whitespace-pre rounded-lg bg-black/55 px-3 py-2 font-mono text-[11px] leading-5 text-slate-300 backdrop-blur sm:block"></pre>
+      <div id="hint" class="pointer-events-none absolute inset-x-3 bottom-3 rounded-lg bg-black/60 px-3 py-2 text-center text-sm text-slate-200 backdrop-blur">Start the camera to begin.</div>
+
+      <!-- Start overlay -->
+      <div id="overlay" class="absolute inset-0 grid place-items-center bg-ink/85 p-6 backdrop-blur-sm">
+        <div class="max-w-sm text-center">
+          <div class="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-neon/40 text-neon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V4h7M24 11V4h-7M4 17v7h7M24 17v7h-7"/></svg>
+          </div>
+          <h2 class="text-xl font-semibold">Turn on your camera</h2>
+          <p class="mt-2 text-sm text-slate-400">Hand tracking runs inside your browser. Your video is never uploaded.</p>
+          <button id="startBtn" class="mt-5 rounded-xl bg-neon px-5 py-2.5 text-sm font-semibold text-ink hover:brightness-110 disabled:opacity-60">Start camera</button>
+          <p id="errorText" class="mt-4 hidden text-sm text-magenta"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Sidebar ============ -->
+  <aside class="flex min-w-0 flex-col gap-4">
+
+    <div class="rounded-2xl border border-edge bg-panel/80 p-4">
+      <h2 class="mb-3 text-sm font-semibold">Effects</h2>
+      <div class="grid grid-cols-2 gap-2" id="filterButtons">
+        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="normal" style="--c:#e6e4ff"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#e6e4ff"></i>Normal</span><kbd>0</kbd></button>
+        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="neon" style="--c:#3df5ff"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#3df5ff"></i>Cyber neon</span><kbd>1</kbd></button>
+        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="negative" style="--c:#ff3df0"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#ff3df0"></i>Negative</span><kbd>2</kbd></button>
+        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="thermal" style="--c:#ffb454"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#ffb454"></i>Thermal</span><kbd>3</kbd></button>
+      </div>
     </div>
 
-    <!-- Main video + canvas container -->
-    <div class="video-container w-full aspect-video bg-black/40 relative">
-        <!-- Video element (hidden because we use canvas for output? no: we draw video to canvas) -->
-        <video id="inputVideo" class="hidden" autoplay playsinline muted></video>
-        <!-- Output canvas: we draw both video frame and overlays -->
-        <canvas id="outputCanvas" class="w-full h-full object-cover block"></canvas>
-        <!-- MediaPipe draws landmarks on separate canvas? we don't need, we draw ourselves -->
-        <!-- HUD overlay inside video area -->
-        <div class="absolute top-4 left-4 z-30 flex flex-col gap-1 pointer-events-none">
-            <div class="hud-panel rounded-lg px-3 py-2 flex items-center gap-3 text-sm">
-                <span class="w-3 h-3 rounded-full bg-cyan-400 animate-pulse"></span>
-                <span id="statusText" class="font-mono text-cyan-200">INITIALIZING...</span>
-            </div>
-            <div id="gestureLog" class="hud-panel rounded-lg px-3 py-2 text-xs max-w-[200px] max-h-[120px] overflow-y-auto font-mono gesture-badge">
-                <div class="log-entry">> awaiting gestures</div>
-            </div>
-        </div>
-        <!-- Bottom right filter indicator -->
-        <div class="absolute bottom-4 right-4 z-30">
-            <div id="filterIndicator" class="hud-panel rounded-full px-4 py-1.5 text-sm font-semibold tracking-wide flex items-center gap-2">
-                <span class="text-cyan-300">FILTER:</span> <span id="filterName" class="text-white">NORMAL</span>
-            </div>
-        </div>
+    <div class="rounded-2xl border border-edge bg-panel/80 p-4">
+      <h2 class="mb-3 text-sm font-semibold">Gestures</h2>
+      <ul class="space-y-2.5 text-sm">
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">🤏</span><span><span class="font-medium">Pinch</span><span class="block text-xs text-slate-400">Thumb and index touch. Cyber neon.</span></span></li>
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">✌️</span><span><span class="font-medium">Peace sign</span><span class="block text-xs text-slate-400">Index and middle up. Negative.</span></span></li>
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">☝️</span><span><span class="font-medium">Point up</span><span class="block text-xs text-slate-400">Only the index finger. Thermal.</span></span></li>
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">🖐️</span><span><span class="font-medium">Open palm</span><span class="block text-xs text-slate-400">All fingers spread. Back to normal.</span></span></li>
+        <li class="flex items-center gap-3 border-t border-edge pt-2.5"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-neon/40 text-neon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V3h5M17 12v5h-5"/></svg></span><span><span class="font-medium">Two L shapes</span><span class="block text-xs text-slate-400">Thumb and index out on both hands, as opposite corners of a frame. Two pinches as corners also work. Opens the portal.</span></span></li>
+      </ul>
     </div>
 
-    <!-- Controls & Instructions -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-        <!-- Instructions -->
-        <div class="hud-panel rounded-xl p-4 col-span-1 md:col-span-2">
-            <h2 class="text-cyan-300 font-semibold mb-2 flex items-center gap-2"><span>✋</span> GESTURE CONTROLS</h2>
-            <div class="grid grid-cols-2 gap-2 text-sm">
-                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">🤏</span> PINCH (thumb+index) → <span class="text-white font-mono">CYBER NEON</span></div>
-                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">✋</span> OPEN PALM (5 fingers) → <span class="text-white font-mono">NEGATIVE</span></div>
-                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">✌️</span> PEACE (index+middle) → <span class="text-white font-mono">THERMAL</span></div>
-                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">✊</span> FIST (0 fingers) → <span class="text-white font-mono">RESET</span></div>
-            </div>
-            <p class="text-xs text-cyan-200/60 mt-3">Hold a gesture for 0.4s to activate. Draw a rectangle with both hands (pinch both) to create a portal window.</p>
-        </div>
-        <!-- Quick manual override buttons (optional) -->
-        <div class="hud-panel rounded-xl p-4 flex flex-col gap-2">
-            <h3 class="text-cyan-300 text-sm font-semibold">MANUAL OVERRIDE</h3>
-            <div class="flex flex-wrap gap-2">
-                <button data-filter="normal" class="ctrl-btn active rounded-full px-4 py-1.5 text-sm font-medium">Normal</button>
-                <button data-filter="cyber" class="ctrl-btn rounded-full px-4 py-1.5 text-sm font-medium">Cyber</button>
-                <button data-filter="negative" class="ctrl-btn rounded-full px-4 py-1.5 text-sm font-medium">Negative</button>
-                <button data-filter="thermal" class="ctrl-btn rounded-full px-4 py-1.5 text-sm font-medium">Thermal</button>
-            </div>
-            <div class="text-xs text-cyan-400/70 mt-1">Gesture overrides manual selection.</div>
-        </div>
+    <div class="rounded-2xl border border-edge bg-panel/80 p-4">
+      <h2 class="mb-3 text-sm font-semibold">Settings</h2>
+      <label class="flex items-center justify-between text-sm">
+        <span>Show hand skeleton</span>
+        <input id="skelToggle" type="checkbox" checked class="h-4 w-4">
+      </label>
+      <div class="mt-4">
+        <div class="flex items-center justify-between text-sm"><label for="holdRange">Hold time to switch</label><span id="holdVal" class="font-mono text-xs text-slate-400">500 ms</span></div>
+        <input id="holdRange" type="range" min="300" max="1200" step="50" value="500" class="mt-2 w-full">
+      </div>
     </div>
+
+    <div class="flex min-h-[200px] flex-1 flex-col rounded-2xl border border-edge bg-panel/80 p-4">
+      <h2 class="mb-3 text-sm font-semibold">Activity</h2>
+      <ul id="log" class="max-h-64 flex-1 space-y-1.5 overflow-y-auto pr-1 font-mono text-xs leading-5 text-slate-300"></ul>
+    </div>
+  </aside>
 </div>
 
 <script>
-    (function(){
-        // ---------- DOM elements ----------
-        const video = document.getElementById('inputVideo');
-        const canvas = document.getElementById('outputCanvas');
-        const ctx = canvas.getContext('2d');
-        const statusText = document.getElementById('statusText');
-        const gestureLog = document.getElementById('gestureLog');
-        const filterNameSpan = document.getElementById('filterName');
-        const filterIndicator = document.getElementById('filterIndicator');
+(() => {
+  'use strict';
 
-        // ---------- State ----------
-        let currentFilter = 'normal';      // 'normal', 'cyber', 'negative', 'thermal'
-        let handsResults = null;           // latest MediaPipe results
-        let lastGesture = 'none';
-        let gestureHoldStart = 0;
-        const GESTURE_HOLD_MS = 400;       // must hold gesture to trigger
-        let portalActive = false;
-        let portalRect = { x: 0, y: 0, w: 0, h: 0 }; // normalized [0..1] for both hands pinch
-        let manualOverride = false;        // if user clicks manual button, disable gesture for 2s
-        let overrideTimeout = null;
+  /* ---------------------------------------------------------------
+   * Config
+   * ------------------------------------------------------------- */
+  const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/';
 
-        // ---------- Helper: log to HUD ----------
-        function addLog(message) {
-            const div = document.createElement('div');
-            div.className = 'log-entry';
-            div.textContent = '> ' + message;
-            gestureLog.appendChild(div);
-            gestureLog.scrollTop = gestureLog.scrollHeight;
-            // keep max 8 entries
-            while (gestureLog.children.length > 8) {
-                gestureLog.removeChild(gestureLog.firstChild);
-            }
-        }
+  const FILTERS = {
+    normal:   { label: 'Normal',     color: '#e6e4ff' },
+    neon:     { label: 'Cyber neon', color: '#3df5ff' },
+    negative: { label: 'Negative',   color: '#ff3df0' },
+    thermal:  { label: 'Thermal',    color: '#ffb454' }
+  };
+  const FILTER_KEYS = { '0': 'normal', '1': 'neon', '2': 'negative', '3': 'thermal' };
+  const GESTURE_TO_FILTER = { pinch: 'neon', peace: 'negative', point: 'thermal', palm: 'normal' };
+  const GNAME = { pinch: 'Pinch', peace: 'Peace sign', point: 'Point up', palm: 'Open palm', L: 'L shape', fist: 'Fist', other: 'Unknown' };
+  const LOG_COLORS = { system: '#8b86b8', gesture: '#3df5ff', filter: '#ff3df0', portal: '#ffb454' };
 
-        // ---------- Update filter indicator UI ----------
-        function setFilter(filter) {
-            if (currentFilter === filter) return;
-            currentFilter = filter;
-            const names = { normal: 'NORMAL', cyber: 'CYBER NEON', negative: 'NEGATIVE', thermal: 'THERMAL' };
-            filterNameSpan.textContent = names[filter] || 'NORMAL';
-            // active button style
-            document.querySelectorAll('[data-filter]').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.filter === filter);
-            });
-            // glow effect on indicator
-            filterIndicator.style.boxShadow = filter === 'cyber' ? '0 0 20px #00ffff' :
-                                              filter === 'thermal' ? '0 0 20px #ff5500' :
-                                              filter === 'negative' ? '0 0 20px #aa88ff' : 'none';
-            addLog(`Filter → ${names[filter]}`);
-        }
+  const CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  const TIPS = [4, 8, 12, 16, 20];
 
-        // ---------- manual override handlers ----------
-        document.querySelectorAll('[data-filter]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const f = e.target.dataset.filter;
-                setFilter(f);
-                manualOverride = true;
-                if (overrideTimeout) clearTimeout(overrideTimeout);
-                overrideTimeout = setTimeout(() => { manualOverride = false; }, 2000);
-                addLog(`Manual override: ${f} (2s)`);
-            });
-        });
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-        // ---------- Setup canvas size (match video) ----------
-        function resizeCanvas() {
-            const videoRatio = video.videoWidth / video.videoHeight;
-            const container = canvas.parentElement;
-            const containerRatio = container.clientWidth / container.clientHeight;
-            // We'll draw video with object-fit: cover; so canvas resolution matches video dimensions to keep landmarks aligned.
-            // But for display we keep canvas CSS covering container. To avoid distortion we set canvas internal size to video size.
-            if (video.videoWidth && video.videoHeight) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-            } else {
-                canvas.width = 1280; canvas.height = 720; // fallback
-            }
-        }
+  /* ---------------------------------------------------------------
+   * DOM + state
+   * ------------------------------------------------------------- */
+  const $ = s => document.querySelector(s);
+  const video = $('#video'), view = $('#view'), ctx = view.getContext('2d');
+  const stage = $('#stage');
+  const work = document.createElement('canvas'), wctx = work.getContext('2d', { willReadFrequently: true });
+  const fx = document.createElement('canvas'), fctx = fx.getContext('2d');
 
-        // ---------- MediaPipe Hands setup ----------
-        const hands = new Hands({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-            }
-        });
+  const S = {
+    running: false, busy: false, stream: null, mp: null,
+    vw: 1280, vh: 720, ww: 640, wh: 360,
+    landmarks: [], resultAt: 0, lastVT: -1, detCount: 0, detFps: 0, fpsAt: 0,
+    tracked: [],
+    filter: 'normal', hold: 500, skeleton: true,
+    track: newTrack(), cnt: { cand: 0, shown: 0, since: 0 },
+    last: 0
+  };
+  const portal = { on: false, openT: 0, rect: null, lastSeen: 0, particles: [] };
 
-        hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.6,
-            minTrackingConfidence: 0.6,
-        });
+  function newTrack() { return { g: null, since: 0, lastSeen: 0, fired: false, logged: false, hand: null }; }
 
-        hands.onResults(onResults);
+  /* ---------------------------------------------------------------
+   * Small helpers
+   * ------------------------------------------------------------- */
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const ease = t => 1 - Math.pow(1 - t, 3);
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+  function hexA(h, a) { const n = parseInt(h.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${clamp01(a)})`; }
+  function setText(el, v) { if (el._v !== v) { el.textContent = v; el._v = v; } }
+  function rr(c, x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    c.beginPath(); c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+  }
 
-        // ---------- Process results ----------
-        function onResults(results) {
-            handsResults = results;
-            // resize canvas if needed (video metadata may load later)
-            if (video.videoWidth && canvas.width !== video.videoWidth) {
-                resizeCanvas();
-            }
-            // If no hands detected, clear gesture state and logs eventually
-            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-                statusText.textContent = 'NO HAND DETECTED';
-                // reset gesture hold if no hand
-                lastGesture = 'none';
-                gestureHoldStart = 0;
-                portalActive = false;
-                return;
-            }
+  const els = {
+    dot: $('#dot'), status: $('#statusText'), fps: $('#fpsText'), badgeDot: $('#badgeDot'), badgeText: $('#badgeText'),
+    hint: $('#hint'), readout: $('#readout'), log: $('#log'), flash: $('#flashText'),
+    overlay: $('#overlay'), startBtn: $('#startBtn'), stopBtn: $('#stopBtn'), err: $('#errorText')
+  };
 
-            // We have at least one hand
-            const landmarks = results.multiHandLandmarks[0];
-            const handedness = results.multiHandedness[0].label; // 'Left' or 'Right'
-            // Detect gesture
-            const gesture = detectGesture(landmarks, handedness);
-            statusText.textContent = `HAND: ${handedness} · GESTURE: ${gesture.toUpperCase()}`;
+  function log(kind, msg) {
+    const li = document.createElement('li');
+    const t = new Date().toLocaleTimeString([], { hour12: false });
+    const ts = document.createElement('span'); ts.className = 'text-slate-500'; ts.textContent = t + ' ';
+    const dot = document.createElement('span'); dot.style.color = LOG_COLORS[kind] || '#fff'; dot.textContent = '\u25CF ';
+    const tx = document.createElement('span'); tx.textContent = msg;
+    li.append(ts, dot, tx);
+    els.log.prepend(li);
+    while (els.log.children.length > 40) els.log.lastChild.remove();
+  }
 
-            // Gesture hold logic (only if not manual override)
-            if (!manualOverride && gesture !== 'none' && gesture !== lastGesture) {
-                lastGesture = gesture;
-                gestureHoldStart = performance.now();
-            } else if (!manualOverride && gesture === lastGesture && gesture !== 'none') {
-                const elapsed = performance.now() - gestureHoldStart;
-                if (elapsed >= GESTURE_HOLD_MS) {
-                    // Trigger filter change based on gesture
-                    switch(gesture) {
-                        case 'pinch': setFilter('cyber'); break;
-                        case 'open': setFilter('negative'); break;
-                        case 'peace': setFilter('thermal'); break;
-                        case 'fist': setFilter('normal'); break;
-                    }
-                    // reset hold to avoid repeated triggering
-                    gestureHoldStart = performance.now() + 10000; // far future
-                }
-            } else if (gesture === 'none') {
-                lastGesture = 'none';
-                gestureHoldStart = 0;
-            }
+  function setStatus(kind, text) {
+    const colors = { idle: '#64618a', loading: '#ffb454', ok: '#3df5ff', warn: '#ff3df0' };
+    els.dot.style.background = colors[kind] || colors.idle;
+    setText(els.status, text);
+  }
 
-            // Portal detection: if both hands are pinching -> rectangle
-            if (results.multiHandLandmarks.length === 2) {
-                const leftHand = results.multiHandLandmarks[0];
-                const rightHand = results.multiHandLandmarks[1];
-                const leftPinch = isPinch(leftHand);
-                const rightPinch = isPinch(rightHand);
-                if (leftPinch && rightPinch) {
-                    // compute bounding box between index fingertips (landmark 8)
-                    const idx1 = leftHand[8];
-                    const idx2 = rightHand[8];
-                    const x1 = idx1.x, y1 = idx1.y;
-                    const x2 = idx2.x, y2 = idx2.y;
-                    portalRect = {
-                        x: Math.min(x1, x2),
-                        y: Math.min(y1, y2),
-                        w: Math.abs(x2 - x1),
-                        h: Math.abs(y2 - y1)
-                    };
-                    portalActive = true;
-                    statusText.textContent += ' · PORTAL ACTIVE';
-                } else {
-                    portalActive = false;
-                }
-            } else {
-                portalActive = false;
-            }
-        }
+  function flash(text, color) {
+    els.flash.textContent = text;
+    els.flash.style.color = color; els.flash.style.borderColor = color;
+    if (reduceMotion) return;
+    els.flash.animate([
+      { opacity: 0, transform: 'translateY(8px) scale(.96)' },
+      { opacity: 1, transform: 'none', offset: .15 },
+      { opacity: 1, transform: 'none', offset: .7 },
+      { opacity: 0, transform: 'translateY(-4px)' }
+    ], { duration: 1500, easing: 'ease-out' });
+  }
 
-        // ---------- Gesture detection helpers ----------
-        function detectGesture(landmarks, handedness) {
-            // landmarks: array of 21 {x,y,z}
-            // Determine extended fingers
-            const fingers = countExtendedFingers(landmarks, handedness);
-            // thumb: we use angle heuristic for pinch vs thumb extended
-            const thumbTip = landmarks[4];
-            const indexTip = landmarks[8];
-            const distThumbIndex = distance(thumbTip, indexTip);
-            // normalized hand size: use wrist to middle finger mcp as scale
-            const wrist = landmarks[0];
-            const middleMcp = landmarks[9];
-            const handScale = distance(wrist, middleMcp) || 0.1;
-            const relativeDist = distThumbIndex / handScale;
+  function setFilter(name, source) {
+    if (!FILTERS[name]) return;
+    S.filter = name;
+    const f = FILTERS[name];
+    document.querySelectorAll('#filterButtons .fbtn').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === name)));
+    els.badgeDot.style.background = f.color;
+    setText(els.badgeText, f.label);
+    log('filter', `${f.label} on (${source})`);
+    flash(f.label, f.color);
+  }
 
-            // Pinch: thumb tip and index tip very close AND fingers not fully open (index not too extended? but pinch can have index extended)
-            // Classic pinch: distance < 0.3 relative to hand size, and thumb & index are the closest.
-            if (relativeDist < 0.35 && fingers.index > 0.5) {
-                // But also ensure middle/ring/pinky not extended? typically pinch has them curled.
-                if (fingers.middle < 0.3 && fingers.ring < 0.3 && fingers.pinky < 0.3) {
-                    return 'pinch';
-                }
-            }
+  /* ---------------------------------------------------------------
+   * Pixel filters (run on a downscaled working canvas)
+   * ------------------------------------------------------------- */
+  const HEAT = (() => {
+    const stops = [[0, [6, 0, 36]], [.22, [48, 6, 140]], [.42, [170, 12, 130]], [.6, [245, 70, 20]], [.8, [255, 190, 20]], [1, [255, 250, 215]]];
+    const lut = new Uint8ClampedArray(256 * 3);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255; let s = 0;
+      while (s < stops.length - 2 && t > stops[s + 1][0]) s++;
+      const [t0, c0] = stops[s], [t1, c1] = stops[s + 1];
+      const k = clamp01((t - t0) / (t1 - t0));
+      for (let c = 0; c < 3; c++) lut[i * 3 + c] = c0[c] + (c1[c] - c0[c]) * k;
+    }
+    return lut;
+  })();
 
-            // Open palm: all 5 fingers extended (including thumb)
-            // Thumb extended check: thumb tip to index mcp distance? We'll use a simple heuristic: thumb tip x relative? 
-            // Using finger extension: thumb has different method: check if thumb tip is far from index mcp and not crossing palm.
-            const thumbExtended = isThumbExtended(landmarks, handedness);
-            const totalExtended = (thumbExtended ? 1 : 0) + 
-                                 (fingers.index > 0.5 ? 1 : 0) + 
-                                 (fingers.middle > 0.5 ? 1 : 0) + 
-                                 (fingers.ring > 0.5 ? 1 : 0) + 
-                                 (fingers.pinky > 0.5 ? 1 : 0);
-            if (totalExtended === 5) return 'open';
+  let gray = new Uint8ClampedArray(0), colM = new Float32Array(0);
 
-            // Peace: index and middle extended, ring and pinky curled, thumb not extended
-            if (fingers.index > 0.5 && fingers.middle > 0.5 && fingers.ring < 0.3 && fingers.pinky < 0.3 && !thumbExtended) {
-                return 'peace';
-            }
+  function fxNegative(img) {
+    const d = img.data;
+    for (let p = 0; p < d.length; p += 4) { d[p] = 255 - d[p]; d[p + 1] = 255 - d[p + 1]; d[p + 2] = 255 - d[p + 2]; }
+  }
 
-            // Fist: no fingers extended (or just thumb?) -> we check all four fingers curled and thumb not extended or curled
-            if (fingers.index < 0.3 && fingers.middle < 0.3 && fingers.ring < 0.3 && fingers.pinky < 0.3) {
-                return 'fist';
-            }
+  function fxThermal(img) {
+    const d = img.data;
+    for (let p = 0; p < d.length; p += 4) {
+      let l = ((d[p] * 77 + d[p + 1] * 150 + d[p + 2] * 29) >> 8);
+      l = Math.min(255, Math.max(0, (l - 20) * 1.3)) | 0;
+      const i = l * 3;
+      d[p] = HEAT[i]; d[p + 1] = HEAT[i + 1]; d[p + 2] = HEAT[i + 2];
+    }
+  }
 
-            return 'none';
-        }
+  function fxNeon(img, w, h, t) {
+    const d = img.data, n = w * h;
+    if (gray.length < n) gray = new Uint8ClampedArray(n);
+    for (let i = 0, p = 0; i < n; i++, p += 4) gray[i] = (d[p] * 77 + d[p + 1] * 150 + d[p + 2] * 29) >> 8;
+    if (colM.length < w) colM = new Float32Array(w);
+    const ph = t * 0.0015;
+    for (let x = 0; x < w; x++) colM[x] = 0.5 + 0.5 * Math.sin(x * 0.045 + ph);
+    for (let y = 0; y < h; y++) {
+      const r0 = Math.max(0, y - 1) * w, r1 = y * w, r2 = Math.min(h - 1, y + 1) * w;
+      const sl = (y & 3) === 0 ? 0.8 : 1;
+      for (let x = 0; x < w; x++) {
+        const xl = x > 0 ? x - 1 : 0, xr = x < w - 1 ? x + 1 : x;
+        const a = gray[r0 + xl], b = gray[r0 + x], c = gray[r0 + xr];
+        const dl = gray[r1 + xl], dr = gray[r1 + xr];
+        const g = gray[r2 + xl], hh = gray[r2 + x], i2 = gray[r2 + xr];
+        const gx = (c + 2 * dr + i2) - (a + 2 * dl + g);
+        const gy = (g + 2 * hh + i2) - (a + 2 * b + c);
+        let k = (Math.abs(gx) + Math.abs(gy) - 40) / 200; k = k < 0 ? 0 : k > 1 ? 1 : k;
+        const L = gray[r1 + x], m = colM[x], p = (r1 + x) * 4;
+        const er = 61 + 194 * m, eg = 245 - 184 * m, eb = 255 - 15 * m;
+        d[p]     = (10 + L * 0.42 + er * k * 1.1) * sl;
+        d[p + 1] = (5 + L * 0.10 + eg * k * 1.1) * sl;
+        d[p + 2] = (30 + L * 0.60 + eb * k * 1.1) * sl;
+      }
+    }
+  }
 
-        // Count extended fingers using angles: for each finger (index, middle, ring, pinky), check if tip is further from wrist than pip joint
-        function countExtendedFingers(landmarks, handedness) {
-            const wrist = landmarks[0];
-            const indices = { index: 8, middle: 12, ring: 16, pinky: 20 };
-            const pips = { index: 6, middle: 10, ring: 14, pinky: 18 };
-            const mcps = { index: 5, middle: 9, ring: 13, pinky: 17 };
-            let result = { index: 0, middle: 0, ring: 0, pinky: 0 };
-            for (let key in indices) {
-                const tip = landmarks[indices[key]];
-                const pip = landmarks[pips[key]];
-                const mcp = landmarks[mcps[key]];
-                const distTipWrist = distance(tip, wrist);
-                const distPipWrist = distance(pip, wrist);
-                // Also consider direction: tip y should be higher (smaller y) than pip for extended finger (in image coords y down)
-                // But use distance: extended if tip is farther from wrist than pip
-                if (distTipWrist > distPipWrist * 1.1) {
-                    result[key] = 1;
-                } else {
-                    result[key] = 0;
-                }
-            }
-            return result;
-        }
+  function applyFilter(img, w, h, name, t) {
+    if (name === 'neon') fxNeon(img, w, h, t);
+    else if (name === 'negative') fxNegative(img);
+    else if (name === 'thermal') fxThermal(img);
+  }
 
-        function isThumbExtended(landmarks, handedness) {
-            // Thumb: check tip (4) and IP (3) and MCP (2)
-            const tip = landmarks[4];
-            const ip = landmarks[3];
-            const mcp = landmarks[2];
-            const wrist = landmarks[0];
-            // Thumb extended if tip is farther from index MCP (5) than IP? Or use distance from pinky MCP.
-            // Simpler: distance from tip to index MCP vs IP to index MCP
-            const indexMcp = landmarks[5];
-            const distTipToIndex = distance(tip, indexMcp);
-            const distIpToIndex = distance(ip, indexMcp);
-            // Also check tip to pinky mcp (17)
-            const pinkyMcp = landmarks[17];
-            const distTipToPinky = distance(tip, pinkyMcp);
-            const distIpToPinky = distance(ip, pinkyMcp);
-            // Thumb is extended if tip is further from both index and pinky MCPs than IP
-            return (distTipToIndex > distIpToIndex * 1.1) && (distTipToPinky > distIpToPinky * 1.1);
-        }
+  /* ---------------------------------------------------------------
+   * Gesture classification
+   * ------------------------------------------------------------- */
+  function classify(p) {
+    const scale = dist(p[0], p[9]) || 1;
+    const ext = (tip, pip) => dist(p[tip], p[0]) > dist(p[pip], p[0]) * 1.15;
+    const idx = ext(8, 6), mid_ = ext(12, 10), rng = ext(16, 14), pnk = ext(20, 18);
+    const thumbOut = dist(p[4], p[5]) / scale;
+    const pinch = dist(p[4], p[8]) / scale;
+    let g;
+    if (pinch < 0.3) g = 'pinch';
+    else if (idx && mid_ && rng && pnk) g = 'palm';
+    else if (idx && mid_ && !rng && !pnk) g = 'peace';
+    else if (idx && !mid_ && !rng && !pnk) g = thumbOut > 0.72 ? 'L' : 'point';
+    else if (!idx && !mid_ && !rng && !pnk) g = 'fist';
+    else g = 'other';
+    return { g, scale, pinch };
+  }
 
-        function isPinch(landmarks) {
-            const thumbTip = landmarks[4];
-            const indexTip = landmarks[8];
-            const wrist = landmarks[0];
-            const middleMcp = landmarks[9];
-            const scale = distance(wrist, middleMcp) || 0.1;
-            return (distance(thumbTip, indexTip) / scale) < 0.35;
-        }
+  function portalTarget(hands) {
+    if (hands.length < 2) return null;
+    const [a, b] = hands;
+    let pts;
+    if (a.g === 'L' && b.g === 'L') pts = [a.p[4], a.p[8], b.p[4], b.p[8]];
+    else if (a.g === 'pinch' && b.g === 'pinch') pts = [mid(a.p[4], a.p[8]), mid(b.p[4], b.p[8])];
+    else return null;
+    const xs = pts.map(q => q.x), ys = pts.map(q => q.y);
+    const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+    if (w < S.vw * 0.12 || h < S.vh * 0.12) return null;
+    return { x, y, w, h };
+  }
 
-        function distance(p1, p2) {
-            return Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        }
+  function analyze(now) {
+    const lms = (now - S.resultAt < 400) ? S.landmarks : [];
+    S.tracked = lms.map(l => {
+      const p = l.map(pt => ({ x: (1 - pt.x) * S.vw, y: pt.y * S.vh })); // mirrored to match the display
+      const c = { x: (p[0].x + p[5].x + p[17].x) / 3, y: (p[0].y + p[5].y + p[17].y) / 3 };
+      return { p, c, ...classify(p) };
+    }).sort((a, b) => a.c.x - b.c.x);
 
-        // ---------- Drawing loop ----------
-        function draw() {
-            if (!video.videoWidth) {
-                requestAnimationFrame(draw);
-                return;
-            }
+    // Log hand-count changes once they are stable
+    const n = S.tracked.length, C = S.cnt;
+    if (n !== C.cand) { C.cand = n; C.since = now; }
+    else if (n !== C.shown && now - C.since > 500) {
+      C.shown = n;
+      log('system', n ? `${n} hand${n > 1 ? 's' : ''} in view` : 'Hands left the view');
+    }
+  }
 
-            // Ensure canvas resolution matches video
-            if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-            }
+  /* ---------------------------------------------------------------
+   * Portal state
+   * ------------------------------------------------------------- */
+  function updatePortal(target, now, dt) {
+    if (target) {
+      portal.lastSeen = now;
+      if (!portal.on) {
+        portal.on = true; portal.rect = { ...target };
+        log('portal', `Portal opened, ${Math.round(target.w)} x ${Math.round(target.h)} px`);
+      } else {
+        const k = 1 - Math.exp(-dt / 70);
+        for (const key of ['x', 'y', 'w', 'h']) portal.rect[key] += (target[key] - portal.rect[key]) * k;
+      }
+    } else if (portal.on && now - portal.lastSeen > 350) {
+      portal.on = false;
+      log('portal', 'Portal closed');
+    }
+    portal.openT = Math.min(1, Math.max(0, portal.openT + (portal.on ? dt / 450 : -dt / 250)));
+    if (portal.openT === 0) portal.particles.length = 0;
+  }
 
-            const w = canvas.width;
-            const h = canvas.height;
+  /* ---------------------------------------------------------------
+   * Hold-to-switch logic
+   * ------------------------------------------------------------- */
+  function updateHold(now) {
+    const pick = portal.on ? null : S.tracked.find(h => GESTURE_TO_FILTER[h.g]);
+    const T = S.track;
+    if (pick) {
+      if (T.g === pick.g) { T.lastSeen = now; T.hand = pick; }
+      else if (!T.g || now - T.lastSeen > 160) S.track = { g: pick.g, since: now, lastSeen: now, fired: false, logged: false, hand: pick };
+    } else if (T.g && now - T.lastSeen > 160) {
+      S.track = newTrack();
+    }
+    const A = S.track;
+    if (A.g) {
+      const held = now - A.since;
+      if (!A.logged && held > 250) { A.logged = true; log('gesture', `${GNAME[A.g]} detected`); }
+      if (!A.fired && held >= S.hold) {
+        A.fired = true;
+        const f = GESTURE_TO_FILTER[A.g];
+        if (f !== S.filter) setFilter(f, GNAME[A.g].toLowerCase());
+      }
+    }
+  }
 
-            // 1. Draw video frame (or filtered version) onto canvas
-            if (currentFilter === 'normal') {
-                ctx.drawImage(video, 0, 0, w, h);
-            } else if (currentFilter === 'negative') {
-                // draw video normally then apply negative via pixel manipulation (offline)
-                ctx.drawImage(video, 0, 0, w, h);
-                const imageData = ctx.getImageData(0, 0, w, h);
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 4) {
-                    data[i] = 255 - data[i];
-                    data[i+1] = 255 - data[i+1];
-                    data[i+2] = 255 - data[i+2];
-                }
-                ctx.putImageData(imageData, 0, 0);
-            } else if (currentFilter === 'cyber') {
-                // draw video, then overlay cyan/magenta tint + scanlines
-                ctx.drawImage(video, 0, 0, w, h);
-                // apply color tint via globalCompositeOperation
-                ctx.save();
-                ctx.globalCompositeOperation = 'overlay';
-                ctx.fillStyle = 'rgba(0, 255, 255, 0.25)';
-                ctx.fillRect(0, 0, w, h);
-                ctx.fillStyle = 'rgba(255, 0, 255, 0.15)';
-                ctx.fillRect(0, 0, w, h);
-                ctx.restore();
+  /* ---------------------------------------------------------------
+   * Rendering
+   * ------------------------------------------------------------- */
+  function drawMirroredVideo(c, w, h) {
+    c.save(); c.translate(w, 0); c.scale(-1, 1); c.drawImage(video, 0, 0, w, h); c.restore();
+  }
 
-                // scanlines
-                ctx.save();
-                ctx.globalAlpha = 0.12;
-                ctx.fillStyle = '#000';
-                for (let y = 0; y < h; y += 4) {
-                    ctx.fillRect(0, y, w, 1.5);
-                }
-                ctx.restore();
-            } else if (currentFilter === 'thermal') {
-                // Thermal: convert to grayscale and apply heat colormap (simplified: blue->red gradient)
-                ctx.drawImage(video, 0, 0, w, h);
-                const imageData = ctx.getImageData(0, 0, w, h);
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 4) {
-                    const r = data[i], g = data[i+1], b = data[i+2];
-                    // luminance
-                    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                    // colormap: low=blue, high=red
-                    const t = lum / 255;
-                    // blue (0,0,255) -> cyan -> green -> yellow -> red (255,0,0)
-                    let nr, ng, nb;
-                    if (t < 0.25) { // blue to cyan
-                        nr = 0; ng = Math.floor(t * 4 * 255); nb = 255;
-                    } else if (t < 0.5) { // cyan to green
-                        nr = 0; ng = 255; nb = Math.floor((0.5 - t) * 4 * 255);
-                    } else if (t < 0.75) { // green to yellow
-                        nr = Math.floor((t - 0.5) * 4 * 255); ng = 255; nb = 0;
-                    } else { // yellow to red
-                        nr = 255; ng = Math.floor((1 - t) * 4 * 255); nb = 0;
-                    }
-                    data[i] = nr; data[i+1] = ng; data[i+2] = nb;
-                }
-                ctx.putImageData(imageData, 0, 0);
-            }
+  function render(now, dt) {
+    const W = S.vw, H = S.vh, k = S.ww / W;
+    const pvis = portal.openT > 0.01 && portal.rect;
+    let r = null, pf = null, e = 0;
 
-            // 2. Draw portal rectangle (if active) & hand landmarks
-            if (handsResults && handsResults.multiHandLandmarks) {
-                // draw landmarks for all hands
-                for (const landmarks of handsResults.multiHandLandmarks) {
-                    drawLandmarks(landmarks, w, h);
-                }
+    if (pvis) {
+      e = ease(portal.openT);
+      const pr = portal.rect, sc = 0.55 + 0.45 * e, w = pr.w * sc, h = pr.h * sc;
+      r = { x: pr.x + pr.w / 2 - w / 2, y: pr.y + pr.h / 2 - h / 2, w, h };
+      pf = S.filter === 'normal' ? 'neon' : S.filter;
 
-                // portal rectangle
-                if (portalActive && portalRect.w > 0.02 && portalRect.h > 0.02) {
-                    const px = portalRect.x * w;
-                    const py = portalRect.y * h;
-                    const pw = portalRect.w * w;
-                    const ph = portalRect.h * h;
-                    // draw neon portal
-                    ctx.save();
-                    ctx.shadowColor = '#00ffff';
-                    ctx.shadowBlur = 20;
-                    ctx.strokeStyle = '#00ffff';
-                    ctx.lineWidth = 6;
-                    ctx.setLineDash([15, 15]);
-                    ctx.strokeRect(px, py, pw, ph);
-                    // inner glow
-                    ctx.shadowBlur = 30;
-                    ctx.strokeStyle = '#ff00ff';
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash([]);
-                    ctx.strokeRect(px+5, py+5, pw-10, ph-10);
-                    // pulsing fill
-                    ctx.globalAlpha = 0.15;
-                    ctx.fillStyle = '#00ffff';
-                    ctx.fillRect(px, py, pw, ph);
-                    ctx.restore();
-                }
-            }
+      drawMirroredVideo(ctx, W, H);
+      ctx.fillStyle = `rgba(6,4,20,${0.55 * e})`; ctx.fillRect(0, 0, W, H);
 
-            requestAnimationFrame(draw);
-        }
+      // filter only the region inside the portal
+      drawMirroredVideo(wctx, S.ww, S.wh);
+      const rx = Math.max(0, Math.floor(r.x * k)), ry = Math.max(0, Math.floor(r.y * k));
+      const rw = Math.min(S.ww - rx, Math.ceil(r.w * k) + 1), rh = Math.min(S.wh - ry, Math.ceil(r.h * k) + 1);
+      if (rw > 2 && rh > 2) {
+        const img = wctx.getImageData(rx, ry, rw, rh);
+        applyFilter(img, rw, rh, pf, now);
+        fctx.putImageData(img, rx, ry);
+        ctx.save();
+        rr(ctx, r.x, r.y, r.w, r.h, 16 * (W / 1280)); ctx.clip();
+        ctx.drawImage(fx, rx, ry, rw, rh, rx / k, ry / k, rw / k, rh / k);
+        ctx.restore();
+      }
+    } else if (S.filter !== 'normal') {
+      drawMirroredVideo(wctx, S.ww, S.wh);
+      const img = wctx.getImageData(0, 0, S.ww, S.wh);
+      applyFilter(img, S.ww, S.wh, S.filter, now);
+      wctx.putImageData(img, 0, 0);
+      ctx.drawImage(work, 0, 0, W, H);
+    } else {
+      drawMirroredVideo(ctx, W, H);
+    }
 
-        function drawLandmarks(landmarks, w, h) {
-            // Draw connections
-            const connections = [
-                [0,1],[1,2],[2,3],[3,4], // thumb
-                [0,5],[5,6],[6,7],[7,8], // index
-                [5,9],[9,10],[10,11],[11,12], // middle
-                [9,13],[13,14],[14,15],[15,16], // ring
-                [13,17],[17,18],[18,19],[19,20], // pinky
-                [0,17] // palm
-            ];
-            ctx.save();
-            ctx.strokeStyle = '#00ffcc';
-            ctx.lineWidth = 2;
-            ctx.shadowBlur = 8;
-            ctx.shadowColor = '#00ffff';
-            for (const [i, j] of connections) {
-                const p1 = landmarks[i];
-                const p2 = landmarks[j];
-                ctx.beginPath();
-                ctx.moveTo(p1.x * w, p1.y * h);
-                ctx.lineTo(p2.x * w, p2.y * h);
-                ctx.stroke();
-            }
-            // Draw joints
-            ctx.fillStyle = '#ffffff';
-            ctx.shadowBlur = 12;
-            ctx.shadowColor = '#00aaff';
-            for (const lm of landmarks) {
-                ctx.beginPath();
-                ctx.arc(lm.x * w, lm.y * h, 5, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-            ctx.restore();
-        }
+    if (pvis) drawPortal(r, e, now, dt, FILTERS[pf].color, pf);
+    if (S.skeleton) S.tracked.forEach(drawHand);
+    drawHold(now);
+  }
 
-        // ---------- Start camera & processing ----------
-        async function startCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 1280, height: 720 } });
-                video.srcObject = stream;
-                await video.play();
-                // Wait for video metadata
-                video.onloadedmetadata = () => {
-                    resizeCanvas();
-                    statusText.textContent = 'TRACKING ACTIVE';
-                    addLog('Camera started');
-                };
-                // Use MediaPipe Camera Utils to send frames
-                const camera = new Camera(video, {
-                    onFrame: async () => {
-                        await hands.send({ image: video });
-                    },
-                    width: 1280,
-                    height: 720
-                });
-                camera.start();
-                addLog('MediaPipe Hands initialized');
-            } catch (err) {
-                console.error(err);
-                statusText.textContent = 'CAMERA ERROR';
-                addLog('ERROR: ' + err.message);
-            }
-        }
+  function drawPortal(r, e, now, dt, color, pf) {
+    const u = S.vw / 1280, rad = 16 * u;
+    ctx.save();
 
-        // Initialize
-        window.addEventListener('load', () => {
-            startCamera();
-            draw(); // start drawing loop
-        });
+    // inner glow + scan line, clipped to the frame
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, rad); ctx.clip();
+    ctx.shadowColor = color; ctx.shadowBlur = 50 * u;
+    ctx.strokeStyle = hexA(color, 0.35 * e); ctx.lineWidth = 36 * u;
+    rr(ctx, r.x, r.y, r.w, r.h, rad); ctx.stroke();
+    if (!reduceMotion) {
+      ctx.shadowBlur = 0;
+      const sy = r.y + ((now * 0.00035) % 1) * r.h;
+      const g = ctx.createLinearGradient(0, sy - 30 * u, 0, sy + 30 * u);
+      g.addColorStop(0, hexA(color, 0)); g.addColorStop(0.5, hexA(color, 0.32)); g.addColorStop(1, hexA(color, 0));
+      ctx.fillStyle = g; ctx.fillRect(r.x, sy - 30 * u, r.w, 60 * u);
+    }
+    ctx.restore();
 
-        // handle resize
-        window.addEventListener('resize', () => {
-            // canvas size is maintained by video dimensions
-        });
-    })();
+    // glowing border
+    ctx.shadowColor = color; ctx.shadowBlur = 28 * u;
+    ctx.strokeStyle = color; ctx.lineWidth = (3 + (1 - e) * 8) * u;
+    rr(ctx, r.x, r.y, r.w, r.h, rad); ctx.stroke(); ctx.stroke();
+
+    // marching dashed inner border
+    ctx.shadowBlur = 0;
+    ctx.setLineDash([14 * u, 12 * u]); ctx.lineDashOffset = -now * 0.04 * u;
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5 * u;
+    rr(ctx, r.x + 10 * u, r.y + 10 * u, r.w - 20 * u, r.h - 20 * u, Math.max(2, rad - 6 * u)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // corner brackets
+    const L = Math.min(r.w, r.h) * 0.14;
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 6 * u; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.shadowColor = color; ctx.shadowBlur = 20 * u;
+    [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]].forEach(([x, y, dx, dy]) => {
+      ctx.beginPath(); ctx.moveTo(x + dx * L, y); ctx.lineTo(x, y); ctx.lineTo(x, y + dy * L); ctx.stroke();
+    });
+    ctx.restore();
+
+    // sparks drifting off the edge
+    if (!reduceMotion) stepParticles(r, e, dt, color, u);
+
+    // label tab
+    const fs = Math.max(12, 14 * u);
+    const text = `portal \u00B7 ${FILTERS[pf].label.toLowerCase()} \u00B7 ${Math.round(r.w)}\u00D7${Math.round(r.h)}`;
+    ctx.save();
+    ctx.font = `500 ${fs}px "IBM Plex Mono", ui-monospace, monospace`;
+    const tw = ctx.measureText(text).width, ph = fs + 12 * u, pw = tw + 22 * u;
+    const ly = r.y > ph + 14 * u ? r.y - ph - 8 * u : r.y + 14 * u;
+    const lx = r.x + (r.y > ph + 14 * u ? 0 : 14 * u);
+    ctx.globalAlpha = e;
+    rr(ctx, lx, ly, pw, ph, ph / 2); ctx.fillStyle = 'rgba(8,6,26,.85)'; ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5 * u; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(text, lx + 11 * u, ly + ph / 2 + 1);
+    ctx.restore();
+  }
+
+  function stepParticles(r, e, dt, color, u) {
+    const P = portal.particles;
+    const spawn = Math.round(2 * e);
+    for (let i = 0; i < spawn && P.length < 140; i++) {
+      let s = Math.random() * 2 * (r.w + r.h), x, y, nx = 0, ny = 0;
+      if (s < r.w) { x = r.x + s; y = r.y; ny = -1; }
+      else if ((s -= r.w) < r.h) { x = r.x + r.w; y = r.y + s; nx = 1; }
+      else if ((s -= r.h) < r.w) { x = r.x + r.w - s; y = r.y + r.h; ny = 1; }
+      else { s -= r.w; x = r.x; y = r.y + r.h - s; nx = -1; }
+      const sp = (0.03 + Math.random() * 0.07) * u;
+      P.push({ x, y, vx: nx * sp + (Math.random() - .5) * 0.02 * u, vy: ny * sp + (Math.random() - .5) * 0.02 * u, life: 1, decay: 1 / (700 + Math.random() * 700), size: (1.5 + Math.random() * 2.5) * u });
+    }
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.shadowBlur = 10 * u;
+    for (let i = P.length - 1; i >= 0; i--) {
+      const p = P[i];
+      p.x += p.vx * dt; p.y += p.vy * dt; p.life -= p.decay * dt;
+      if (p.life <= 0) { P.splice(i, 1); continue; }
+      ctx.fillStyle = hexA(color, p.life);
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawHand(h) {
+    const u = S.vw / 1280, p = h.p;
+    ctx.save(); ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(61,245,255,.6)'; ctx.lineWidth = 2.5 * u;
+    ctx.shadowColor = '#3df5ff'; ctx.shadowBlur = 8 * u;
+    ctx.beginPath();
+    CONN.forEach(([a, b]) => { ctx.moveTo(p[a].x, p[a].y); ctx.lineTo(p[b].x, p[b].y); });
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < 21; i++) {
+      const tip = TIPS.includes(i);
+      ctx.fillStyle = tip ? '#ffffff' : 'rgba(61,245,255,.9)';
+      ctx.beginPath(); ctx.arc(p[i].x, p[i].y, (tip ? 5 : 3) * u, 0, Math.PI * 2); ctx.fill();
+    }
+    if (h.g === 'pinch') {
+      const m = mid(p[4], p[8]);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5 * u;
+      ctx.beginPath(); ctx.arc(m.x, m.y, 14 * u, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawHold(now) {
+    const T = S.track;
+    if (!T.g || !T.hand || now - T.lastSeen > 160) return;
+    const f = GESTURE_TO_FILTER[T.g], col = FILTERS[f].color, h = T.hand, u = S.vw / 1280;
+    const R = Math.max(30 * u, h.scale * 0.95);
+    const prog = T.fired ? 1 : Math.min(1, (now - T.since) / S.hold);
+    ctx.save(); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(h.c.x, h.c.y, R, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 5 * u; ctx.stroke();
+    ctx.beginPath(); ctx.arc(h.c.x, h.c.y, R, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
+    ctx.strokeStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 18 * u; ctx.lineWidth = 5 * u;
+    ctx.globalAlpha = T.fired ? 0.45 : 1; ctx.stroke();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    ctx.font = `600 ${Math.max(12, 15 * u)}px Sora, system-ui, sans-serif`; ctx.textAlign = 'center';
+    const label = `${GNAME[T.g]} for ${FILTERS[f].label}`;
+    ctx.lineWidth = 4 * u; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.strokeText(label, h.c.x, h.c.y + R + 24 * u);
+    ctx.fillStyle = col; ctx.fillText(label, h.c.x, h.c.y + R + 24 * u);
+    ctx.restore();
+  }
+
+  /* ---------------------------------------------------------------
+   * HUD text
+   * ------------------------------------------------------------- */
+  function updateHud() {
+    const n = S.tracked.length;
+    if (n) setStatus('ok', `Tracking ${n} hand${n > 1 ? 's' : ''}`); else setStatus('warn', 'No hands in view');
+    setText(els.fps, `${S.detFps} fps`);
+
+    let hint;
+    if (!n) hint = 'Show one or both hands to the camera.';
+    else if (portal.on) hint = 'Portal open. Move your hands to resize it, or lower them to close it.';
+    else if (n >= 2) hint = 'Make an L with each hand, or pinch with both, to open a portal.';
+    else hint = `Hold a pinch, peace sign, point or open palm for ${(S.hold / 1000).toFixed(2).replace(/0$/, '')} seconds to switch effects.`;
+    setText(els.hint, hint);
+
+    const lines = S.tracked.map((h, i) => `Hand ${i + 1}  ${GNAME[h.g]}  (pinch ${h.pinch.toFixed(2)})`);
+    if (portal.on && portal.rect) lines.push(`Portal  ${Math.round(portal.rect.w)} \u00D7 ${Math.round(portal.rect.h)}`);
+    setText(els.readout, lines.join('\n') || 'No hands');
+    els.readout.style.display = lines.length ? '' : 'none';
+  }
+
+  /* ---------------------------------------------------------------
+   * Main loop
+   * ------------------------------------------------------------- */
+  function frame(now) {
+    if (!S.running) return;
+    const dt = Math.min(64, now - S.last); S.last = now;
+
+    if (!S.busy && video.readyState >= 2 && video.currentTime !== S.lastVT) {
+      S.lastVT = video.currentTime; S.busy = true;
+      S.mp.send({ image: video }).catch(err => console.error(err)).finally(() => { S.busy = false; });
+    }
+    if (now - S.fpsAt >= 1000) { S.detFps = S.detCount; S.detCount = 0; S.fpsAt = now; }
+
+    analyze(now);
+    updatePortal(portalTarget(S.tracked), now, dt);
+    updateHold(now);
+    render(now, dt);
+    updateHud();
+    requestAnimationFrame(frame);
+  }
+
+  function onResults(res) {
+    S.landmarks = res.multiHandLandmarks || [];
+    S.resultAt = performance.now();
+    S.detCount++;
+  }
+
+  /* ---------------------------------------------------------------
+   * Camera lifecycle
+   * ------------------------------------------------------------- */
+  function showError(msg) {
+    els.err.textContent = msg; els.err.classList.remove('hidden');
+    els.startBtn.disabled = false; els.startBtn.textContent = 'Try again';
+    els.overlay.classList.remove('hidden');
+    setStatus('warn', 'Camera unavailable');
+  }
+
+  async function start() {
+    els.err.classList.add('hidden');
+    els.startBtn.disabled = true; els.startBtn.textContent = 'Starting camera\u2026';
+    setStatus('loading', 'Starting camera');
+    try {
+      if (typeof Hands === 'undefined') throw Object.assign(new Error('mp'), { name: 'MediaPipeMissing' });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('ctx'), { name: 'InsecureContext' });
+
+      S.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false });
+      video.srcObject = S.stream;
+      await video.play();
+
+      S.vw = video.videoWidth || 1280; S.vh = video.videoHeight || 720;
+      view.width = S.vw; view.height = S.vh;
+      stage.style.aspectRatio = `${S.vw} / ${S.vh}`;
+      S.ww = Math.min(640, S.vw); S.wh = Math.round(S.ww * S.vh / S.vw);
+      work.width = fx.width = S.ww; work.height = fx.height = S.wh;
+
+      els.startBtn.textContent = 'Loading hand model\u2026'; setStatus('loading', 'Loading hand model');
+      if (!S.mp) {
+        S.mp = new Hands({ locateFile: f => MP_BASE + f });
+        S.mp.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5, selfieMode: false });
+        S.mp.onResults(onResults);
+        await S.mp.initialize();
+      }
+
+      S.landmarks = []; S.tracked = []; S.track = newTrack(); S.lastVT = -1;
+      S.cnt = { cand: 0, shown: 0, since: performance.now() };
+      portal.on = false; portal.openT = 0; portal.particles.length = 0;
+      S.running = true; S.last = S.fpsAt = performance.now();
+      els.overlay.classList.add('hidden'); els.stopBtn.classList.remove('hidden');
+      log('system', `Camera ready, ${S.vw} \u00D7 ${S.vh}`);
+      requestAnimationFrame(frame);
+    } catch (err) {
+      console.error(err);
+      if (S.stream) { S.stream.getTracks().forEach(t => t.stop()); S.stream = null; }
+      const msgs = {
+        NotAllowedError: 'Camera permission was denied. Allow camera access in the address bar, then try again.',
+        NotFoundError: 'No camera was found. Connect one and try again.',
+        NotReadableError: 'The camera is in use by another app. Close it and try again.',
+        InsecureContext: 'Camera access needs a secure page. Open this file through https:// or http://localhost.',
+        MediaPipeMissing: 'The hand-tracking library did not load. Check your internet connection and reload.'
+      };
+      showError(msgs[err.name] || `Could not start: ${err.message || err.name}`);
+    }
+  }
+
+  function stop() {
+    S.running = false;
+    if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+    S.stream = null; video.srcObject = null;
+    ctx.clearRect(0, 0, view.width, view.height);
+    portal.on = false; portal.openT = 0;
+    els.overlay.classList.remove('hidden'); els.stopBtn.classList.add('hidden');
+    els.startBtn.disabled = false; els.startBtn.textContent = 'Start camera';
+    setStatus('idle', 'Camera off'); setText(els.fps, '');
+    setText(els.hint, 'Start the camera to begin.'); els.readout.style.display = 'none';
+    log('system', 'Camera stopped');
+  }
+
+  /* ---------------------------------------------------------------
+   * Controls
+   * ------------------------------------------------------------- */
+  els.startBtn.addEventListener('click', start);
+  els.stopBtn.addEventListener('click', stop);
+  document.querySelectorAll('#filterButtons .fbtn').forEach(b => b.addEventListener('click', () => { if (b.dataset.filter !== S.filter) setFilter(b.dataset.filter, 'button'); }));
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const f = FILTER_KEYS[e.key];
+    if (f && f !== S.filter) setFilter(f, 'keyboard');
+  });
+  $('#skelToggle').addEventListener('change', e => { S.skeleton = e.target.checked; });
+  $('#holdRange').addEventListener('input', e => { S.hold = +e.target.value; $('#holdVal').textContent = `${S.hold} ms`; });
+
+  // initial UI state
+  document.querySelector('#filterButtons [data-filter="normal"]').setAttribute('aria-pressed', 'true');
+  log('system', 'Ready. Start the camera to begin.');
+})();
 </script>
 </body>
 </html>
