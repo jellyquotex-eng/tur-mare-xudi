@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberNeon Portal · Hand Gesture Filters</title>
+    <!-- Tailwind via CDN + custom tweaks -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        /* Custom glow & scanline effects */
+        body {
+            background: radial-gradient(circle at 20% 30%, #0b0e14, #030405);
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .hud-panel {
+            backdrop-filter: blur(8px);
+            background: rgba(10, 15, 25, 0.7);
+            border: 1px solid rgba(0, 255, 255, 0.25);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.15);
+        }
+        .gesture-badge {
+            background: rgba(0, 200, 255, 0.15);
+            border-left: 3px solid #00ffff;
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.7);
+        }
+        .video-container {
+            box-shadow: 0 0 35px rgba(0, 180, 255, 0.3);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 1.25rem;
+            overflow: hidden;
+            position: relative;
+        }
+        /* Canvas overlay absolute */
+        #overlayCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 20;
+        }
+        /* Status text subtle glow */
+        .glow-text {
+            text-shadow: 0 0 6px #00ffff, 0 0 12px #0088ff;
+        }
+        .log-entry {
+            border-left: 2px solid #00ccff;
+            padding-left: 8px;
+            margin-bottom: 4px;
+            font-size: 0.8rem;
+            color: #b0e0ff;
+        }
+        /* Thumbnail controls */
+        .ctrl-btn {
+            transition: all 0.2s ease;
+            background: rgba(20, 30, 45, 0.8);
+            border: 1px solid rgba(0, 255, 255, 0.4);
+        }
+        .ctrl-btn:hover {
+            background: rgba(0, 200, 255, 0.25);
+            box-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
+        }
+        .ctrl-btn.active {
+            background: #00aaff;
+            color: #000;
+            border-color: #ffffff;
+            box-shadow: 0 0 18px #00aaff;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-white flex items-center justify-center p-4">
+
+<div class="max-w-5xl w-full flex flex-col items-center gap-4">
+    <!-- Header / Title -->
+    <div class="flex items-center justify-between w-full px-2">
+        <h1 class="text-2xl md:text-3xl font-bold tracking-tight glow-text flex items-center gap-2">
+            <span class="text-cyan-400">⚡</span> CYBER NEON <span class="text-cyan-400">PORTAL</span>
+        </h1>
+        <div class="text-xs text-cyan-300/70 uppercase tracking-widest">hand‑tracked AR filters</div>
+    </div>
+
+    <!-- Main video + canvas container -->
+    <div class="video-container w-full aspect-video bg-black/40 relative">
+        <!-- Video element (hidden because we use canvas for output? no: we draw video to canvas) -->
+        <video id="inputVideo" class="hidden" autoplay playsinline muted></video>
+        <!-- Output canvas: we draw both video frame and overlays -->
+        <canvas id="outputCanvas" class="w-full h-full object-cover block"></canvas>
+        <!-- MediaPipe draws landmarks on separate canvas? we don't need, we draw ourselves -->
+        <!-- HUD overlay inside video area -->
+        <div class="absolute top-4 left-4 z-30 flex flex-col gap-1 pointer-events-none">
+            <div class="hud-panel rounded-lg px-3 py-2 flex items-center gap-3 text-sm">
+                <span class="w-3 h-3 rounded-full bg-cyan-400 animate-pulse"></span>
+                <span id="statusText" class="font-mono text-cyan-200">INITIALIZING...</span>
+            </div>
+            <div id="gestureLog" class="hud-panel rounded-lg px-3 py-2 text-xs max-w-[200px] max-h-[120px] overflow-y-auto font-mono gesture-badge">
+                <div class="log-entry">> awaiting gestures</div>
+            </div>
+        </div>
+        <!-- Bottom right filter indicator -->
+        <div class="absolute bottom-4 right-4 z-30">
+            <div id="filterIndicator" class="hud-panel rounded-full px-4 py-1.5 text-sm font-semibold tracking-wide flex items-center gap-2">
+                <span class="text-cyan-300">FILTER:</span> <span id="filterName" class="text-white">NORMAL</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls & Instructions -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+        <!-- Instructions -->
+        <div class="hud-panel rounded-xl p-4 col-span-1 md:col-span-2">
+            <h2 class="text-cyan-300 font-semibold mb-2 flex items-center gap-2"><span>✋</span> GESTURE CONTROLS</h2>
+            <div class="grid grid-cols-2 gap-2 text-sm">
+                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">🤏</span> PINCH (thumb+index) → <span class="text-white font-mono">CYBER NEON</span></div>
+                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">✋</span> OPEN PALM (5 fingers) → <span class="text-white font-mono">NEGATIVE</span></div>
+                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">✌️</span> PEACE (index+middle) → <span class="text-white font-mono">THERMAL</span></div>
+                <div class="flex items-center gap-2"><span class="text-cyan-400 text-lg">✊</span> FIST (0 fingers) → <span class="text-white font-mono">RESET</span></div>
+            </div>
+            <p class="text-xs text-cyan-200/60 mt-3">Hold a gesture for 0.4s to activate. Draw a rectangle with both hands (pinch both) to create a portal window.</p>
+        </div>
+        <!-- Quick manual override buttons (optional) -->
+        <div class="hud-panel rounded-xl p-4 flex flex-col gap-2">
+            <h3 class="text-cyan-300 text-sm font-semibold">MANUAL OVERRIDE</h3>
+            <div class="flex flex-wrap gap-2">
+                <button data-filter="normal" class="ctrl-btn active rounded-full px-4 py-1.5 text-sm font-medium">Normal</button>
+                <button data-filter="cyber" class="ctrl-btn rounded-full px-4 py-1.5 text-sm font-medium">Cyber</button>
+                <button data-filter="negative" class="ctrl-btn rounded-full px-4 py-1.5 text-sm font-medium">Negative</button>
+                <button data-filter="thermal" class="ctrl-btn rounded-full px-4 py-1.5 text-sm font-medium">Thermal</button>
+            </div>
+            <div class="text-xs text-cyan-400/70 mt-1">Gesture overrides manual selection.</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        // ---------- DOM elements ----------
+        const video = document.getElementById('inputVideo');
+        const canvas = document.getElementById('outputCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('statusText');
+        const gestureLog = document.getElementById('gestureLog');
+        const filterNameSpan = document.getElementById('filterName');
+        const filterIndicator = document.getElementById('filterIndicator');
+
+        // ---------- State ----------
+        let currentFilter = 'normal';      // 'normal', 'cyber', 'negative', 'thermal'
+        let handsResults = null;           // latest MediaPipe results
+        let lastGesture = 'none';
+        let gestureHoldStart = 0;
+        const GESTURE_HOLD_MS = 400;       // must hold gesture to trigger
+        let portalActive = false;
+        let portalRect = { x: 0, y: 0, w: 0, h: 0 }; // normalized [0..1] for both hands pinch
+        let manualOverride = false;        // if user clicks manual button, disable gesture for 2s
+        let overrideTimeout = null;
+
+        // ---------- Helper: log to HUD ----------
+        function addLog(message) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.textContent = '> ' + message;
+            gestureLog.appendChild(div);
+            gestureLog.scrollTop = gestureLog.scrollHeight;
+            // keep max 8 entries
+            while (gestureLog.children.length > 8) {
+                gestureLog.removeChild(gestureLog.firstChild);
+            }
+        }
+
+        // ---------- Update filter indicator UI ----------
+        function setFilter(filter) {
+            if (currentFilter === filter) return;
+            currentFilter = filter;
+            const names = { normal: 'NORMAL', cyber: 'CYBER NEON', negative: 'NEGATIVE', thermal: 'THERMAL' };
+            filterNameSpan.textContent = names[filter] || 'NORMAL';
+            // active button style
+            document.querySelectorAll('[data-filter]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.filter === filter);
+            });
+            // glow effect on indicator
+            filterIndicator.style.boxShadow = filter === 'cyber' ? '0 0 20px #00ffff' :
+                                              filter === 'thermal' ? '0 0 20px #ff5500' :
+                                              filter === 'negative' ? '0 0 20px #aa88ff' : 'none';
+            addLog(`Filter → ${names[filter]}`);
+        }
+
+        // ---------- manual override handlers ----------
+        document.querySelectorAll('[data-filter]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const f = e.target.dataset.filter;
+                setFilter(f);
+                manualOverride = true;
+                if (overrideTimeout) clearTimeout(overrideTimeout);
+                overrideTimeout = setTimeout(() => { manualOverride = false; }, 2000);
+                addLog(`Manual override: ${f} (2s)`);
+            });
+        });
+
+        // ---------- Setup canvas size (match video) ----------
+        function resizeCanvas() {
+            const videoRatio = video.videoWidth / video.videoHeight;
+            const container = canvas.parentElement;
+            const containerRatio = container.clientWidth / container.clientHeight;
+            // We'll draw video with object-fit: cover; so canvas resolution matches video dimensions to keep landmarks aligned.
+            // But for display we keep canvas CSS covering container. To avoid distortion we set canvas internal size to video size.
+            if (video.videoWidth && video.videoHeight) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            } else {
+                canvas.width = 1280; canvas.height = 720; // fallback
+            }
+        }
+
+        // ---------- MediaPipe Hands setup ----------
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6,
+        });
+
+        hands.onResults(onResults);
+
+        // ---------- Process results ----------
+        function onResults(results) {
+            handsResults = results;
+            // resize canvas if needed (video metadata may load later)
+            if (video.videoWidth && canvas.width !== video.videoWidth) {
+                resizeCanvas();
+            }
+            // If no hands detected, clear gesture state and logs eventually
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                statusText.textContent = 'NO HAND DETECTED';
+                // reset gesture hold if no hand
+                lastGesture = 'none';
+                gestureHoldStart = 0;
+                portalActive = false;
+                return;
+            }
+
+            // We have at least one hand
+            const landmarks = results.multiHandLandmarks[0];
+            const handedness = results.multiHandedness[0].label; // 'Left' or 'Right'
+            // Detect gesture
+            const gesture = detectGesture(landmarks, handedness);
+            statusText.textContent = `HAND: ${handedness} · GESTURE: ${gesture.toUpperCase()}`;
+
+            // Gesture hold logic (only if not manual override)
+            if (!manualOverride && gesture !== 'none' && gesture !== lastGesture) {
+                lastGesture = gesture;
+                gestureHoldStart = performance.now();
+            } else if (!manualOverride && gesture === lastGesture && gesture !== 'none') {
+                const elapsed = performance.now() - gestureHoldStart;
+                if (elapsed >= GESTURE_HOLD_MS) {
+                    // Trigger filter change based on gesture
+                    switch(gesture) {
+                        case 'pinch': setFilter('cyber'); break;
+                        case 'open': setFilter('negative'); break;
+                        case 'peace': setFilter('thermal'); break;
+                        case 'fist': setFilter('normal'); break;
+                    }
+                    // reset hold to avoid repeated triggering
+                    gestureHoldStart = performance.now() + 10000; // far future
+                }
+            } else if (gesture === 'none') {
+                lastGesture = 'none';
+                gestureHoldStart = 0;
+            }
+
+            // Portal detection: if both hands are pinching -> rectangle
+            if (results.multiHandLandmarks.length === 2) {
+                const leftHand = results.multiHandLandmarks[0];
+                const rightHand = results.multiHandLandmarks[1];
+                const leftPinch = isPinch(leftHand);
+                const rightPinch = isPinch(rightHand);
+                if (leftPinch && rightPinch) {
+                    // compute bounding box between index fingertips (landmark 8)
+                    const idx1 = leftHand[8];
+                    const idx2 = rightHand[8];
+                    const x1 = idx1.x, y1 = idx1.y;
+                    const x2 = idx2.x, y2 = idx2.y;
+                    portalRect = {
+                        x: Math.min(x1, x2),
+                        y: Math.min(y1, y2),
+                        w: Math.abs(x2 - x1),
+                        h: Math.abs(y2 - y1)
+                    };
+                    portalActive = true;
+                    statusText.textContent += ' · PORTAL ACTIVE';
+                } else {
+                    portalActive = false;
+                }
+            } else {
+                portalActive = false;
+            }
+        }
+
+        // ---------- Gesture detection helpers ----------
+        function detectGesture(landmarks, handedness) {
+            // landmarks: array of 21 {x,y,z}
+            // Determine extended fingers
+            const fingers = countExtendedFingers(landmarks, handedness);
+            // thumb: we use angle heuristic for pinch vs thumb extended
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const distThumbIndex = distance(thumbTip, indexTip);
+            // normalized hand size: use wrist to middle finger mcp as scale
+            const wrist = landmarks[0];
+            const middleMcp = landmarks[9];
+            const handScale = distance(wrist, middleMcp) || 0.1;
+            const relativeDist = distThumbIndex / handScale;
+
+            // Pinch: thumb tip and index tip very close AND fingers not fully open (index not too extended? but pinch can have index extended)
+            // Classic pinch: distance < 0.3 relative to hand size, and thumb & index are the closest.
+            if (relativeDist < 0.35 && fingers.index > 0.5) {
+                // But also ensure middle/ring/pinky not extended? typically pinch has them curled.
+                if (fingers.middle < 0.3 && fingers.ring < 0.3 && fingers.pinky < 0.3) {
+                    return 'pinch';
+                }
+            }
+
+            // Open palm: all 5 fingers extended (including thumb)
+            // Thumb extended check: thumb tip to index mcp distance? We'll use a simple heuristic: thumb tip x relative? 
+            // Using finger extension: thumb has different method: check if thumb tip is far from index mcp and not crossing palm.
+            const thumbExtended = isThumbExtended(landmarks, handedness);
+            const totalExtended = (thumbExtended ? 1 : 0) + 
+                                 (fingers.index > 0.5 ? 1 : 0) + 
+                                 (fingers.middle > 0.5 ? 1 : 0) + 
+                                 (fingers.ring > 0.5 ? 1 : 0) + 
+                                 (fingers.pinky > 0.5 ? 1 : 0);
+            if (totalExtended === 5) return 'open';
+
+            // Peace: index and middle extended, ring and pinky curled, thumb not extended
+            if (fingers.index > 0.5 && fingers.middle > 0.5 && fingers.ring < 0.3 && fingers.pinky < 0.3 && !thumbExtended) {
+                return 'peace';
+            }
+
+            // Fist: no fingers extended (or just thumb?) -> we check all four fingers curled and thumb not extended or curled
+            if (fingers.index < 0.3 && fingers.middle < 0.3 && fingers.ring < 0.3 && fingers.pinky < 0.3) {
+                return 'fist';
+            }
+
+            return 'none';
+        }
+
+        // Count extended fingers using angles: for each finger (index, middle, ring, pinky), check if tip is further from wrist than pip joint
+        function countExtendedFingers(landmarks, handedness) {
+            const wrist = landmarks[0];
+            const indices = { index: 8, middle: 12, ring: 16, pinky: 20 };
+            const pips = { index: 6, middle: 10, ring: 14, pinky: 18 };
+            const mcps = { index: 5, middle: 9, ring: 13, pinky: 17 };
+            let result = { index: 0, middle: 0, ring: 0, pinky: 0 };
+            for (let key in indices) {
+                const tip = landmarks[indices[key]];
+                const pip = landmarks[pips[key]];
+                const mcp = landmarks[mcps[key]];
+                const distTipWrist = distance(tip, wrist);
+                const distPipWrist = distance(pip, wrist);
+                // Also consider direction: tip y should be higher (smaller y) than pip for extended finger (in image coords y down)
+                // But use distance: extended if tip is farther from wrist than pip
+                if (distTipWrist > distPipWrist * 1.1) {
+                    result[key] = 1;
+                } else {
+                    result[key] = 0;
+                }
+            }
+            return result;
+        }
+
+        function isThumbExtended(landmarks, handedness) {
+            // Thumb: check tip (4) and IP (3) and MCP (2)
+            const tip = landmarks[4];
+            const ip = landmarks[3];
+            const mcp = landmarks[2];
+            const wrist = landmarks[0];
+            // Thumb extended if tip is farther from index MCP (5) than IP? Or use distance from pinky MCP.
+            // Simpler: distance from tip to index MCP vs IP to index MCP
+            const indexMcp = landmarks[5];
+            const distTipToIndex = distance(tip, indexMcp);
+            const distIpToIndex = distance(ip, indexMcp);
+            // Also check tip to pinky mcp (17)
+            const pinkyMcp = landmarks[17];
+            const distTipToPinky = distance(tip, pinkyMcp);
+            const distIpToPinky = distance(ip, pinkyMcp);
+            // Thumb is extended if tip is further from both index and pinky MCPs than IP
+            return (distTipToIndex > distIpToIndex * 1.1) && (distTipToPinky > distIpToPinky * 1.1);
+        }
+
+        function isPinch(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const wrist = landmarks[0];
+            const middleMcp = landmarks[9];
+            const scale = distance(wrist, middleMcp) || 0.1;
+            return (distance(thumbTip, indexTip) / scale) < 0.35;
+        }
+
+        function distance(p1, p2) {
+            return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        }
+
+        // ---------- Drawing loop ----------
+        function draw() {
+            if (!video.videoWidth) {
+                requestAnimationFrame(draw);
+                return;
+            }
+
+            // Ensure canvas resolution matches video
+            if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            }
+
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // 1. Draw video frame (or filtered version) onto canvas
+            if (currentFilter === 'normal') {
+                ctx.drawImage(video, 0, 0, w, h);
+            } else if (currentFilter === 'negative') {
+                // draw video normally then apply negative via pixel manipulation (offline)
+                ctx.drawImage(video, 0, 0, w, h);
+                const imageData = ctx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    data[i] = 255 - data[i];
+                    data[i+1] = 255 - data[i+1];
+                    data[i+2] = 255 - data[i+2];
+                }
+                ctx.putImageData(imageData, 0, 0);
+            } else if (currentFilter === 'cyber') {
+                // draw video, then overlay cyan/magenta tint + scanlines
+                ctx.drawImage(video, 0, 0, w, h);
+                // apply color tint via globalCompositeOperation
+                ctx.save();
+                ctx.globalCompositeOperation = 'overlay';
+                ctx.fillStyle = 'rgba(0, 255, 255, 0.25)';
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = 'rgba(255, 0, 255, 0.15)';
+                ctx.fillRect(0, 0, w, h);
+                ctx.restore();
+
+                // scanlines
+                ctx.save();
+                ctx.globalAlpha = 0.12;
+                ctx.fillStyle = '#000';
+                for (let y = 0; y < h; y += 4) {
+                    ctx.fillRect(0, y, w, 1.5);
+                }
+                ctx.restore();
+            } else if (currentFilter === 'thermal') {
+                // Thermal: convert to grayscale and apply heat colormap (simplified: blue->red gradient)
+                ctx.drawImage(video, 0, 0, w, h);
+                const imageData = ctx.getImageData(0, 0, w, h);
+                const data = imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i], g = data[i+1], b = data[i+2];
+                    // luminance
+                    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                    // colormap: low=blue, high=red
+                    const t = lum / 255;
+                    // blue (0,0,255) -> cyan -> green -> yellow -> red (255,0,0)
+                    let nr, ng, nb;
+                    if (t < 0.25) { // blue to cyan
+                        nr = 0; ng = Math.floor(t * 4 * 255); nb = 255;
+                    } else if (t < 0.5) { // cyan to green
+                        nr = 0; ng = 255; nb = Math.floor((0.5 - t) * 4 * 255);
+                    } else if (t < 0.75) { // green to yellow
+                        nr = Math.floor((t - 0.5) * 4 * 255); ng = 255; nb = 0;
+                    } else { // yellow to red
+                        nr = 255; ng = Math.floor((1 - t) * 4 * 255); nb = 0;
+                    }
+                    data[i] = nr; data[i+1] = ng; data[i+2] = nb;
+                }
+                ctx.putImageData(imageData, 0, 0);
+            }
+
+            // 2. Draw portal rectangle (if active) & hand landmarks
+            if (handsResults && handsResults.multiHandLandmarks) {
+                // draw landmarks for all hands
+                for (const landmarks of handsResults.multiHandLandmarks) {
+                    drawLandmarks(landmarks, w, h);
+                }
+
+                // portal rectangle
+                if (portalActive && portalRect.w > 0.02 && portalRect.h > 0.02) {
+                    const px = portalRect.x * w;
+                    const py = portalRect.y * h;
+                    const pw = portalRect.w * w;
+                    const ph = portalRect.h * h;
+                    // draw neon portal
+                    ctx.save();
+                    ctx.shadowColor = '#00ffff';
+                    ctx.shadowBlur = 20;
+                    ctx.strokeStyle = '#00ffff';
+                    ctx.lineWidth = 6;
+                    ctx.setLineDash([15, 15]);
+                    ctx.strokeRect(px, py, pw, ph);
+                    // inner glow
+                    ctx.shadowBlur = 30;
+                    ctx.strokeStyle = '#ff00ff';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([]);
+                    ctx.strokeRect(px+5, py+5, pw-10, ph-10);
+                    // pulsing fill
+                    ctx.globalAlpha = 0.15;
+                    ctx.fillStyle = '#00ffff';
+                    ctx.fillRect(px, py, pw, ph);
+                    ctx.restore();
+                }
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        function drawLandmarks(landmarks, w, h) {
+            // Draw connections
+            const connections = [
+                [0,1],[1,2],[2,3],[3,4], // thumb
+                [0,5],[5,6],[6,7],[7,8], // index
+                [5,9],[9,10],[10,11],[11,12], // middle
+                [9,13],[13,14],[14,15],[15,16], // ring
+                [13,17],[17,18],[18,19],[19,20], // pinky
+                [0,17] // palm
+            ];
+            ctx.save();
+            ctx.strokeStyle = '#00ffcc';
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = '#00ffff';
+            for (const [i, j] of connections) {
+                const p1 = landmarks[i];
+                const p2 = landmarks[j];
+                ctx.beginPath();
+                ctx.moveTo(p1.x * w, p1.y * h);
+                ctx.lineTo(p2.x * w, p2.y * h);
+                ctx.stroke();
+            }
+            // Draw joints
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = '#00aaff';
+            for (const lm of landmarks) {
+                ctx.beginPath();
+                ctx.arc(lm.x * w, lm.y * h, 5, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        // ---------- Start camera & processing ----------
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 1280, height: 720 } });
+                video.srcObject = stream;
+                await video.play();
+                // Wait for video metadata
+                video.onloadedmetadata = () => {
+                    resizeCanvas();
+                    statusText.textContent = 'TRACKING ACTIVE';
+                    addLog('Camera started');
+                };
+                // Use MediaPipe Camera Utils to send frames
+                const camera = new Camera(video, {
+                    onFrame: async () => {
+                        await hands.send({ image: video });
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                camera.start();
+                addLog('MediaPipe Hands initialized');
+            } catch (err) {
+                console.error(err);
+                statusText.textContent = 'CAMERA ERROR';
+                addLog('ERROR: ' + err.message);
+            }
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            startCamera();
+            draw(); // start drawing loop
+        });
+
+        // handle resize
+        window.addEventListener('resize', () => {
+            // canvas size is maintained by video dimensions
+        });
+    })();
+</script>
+</body>
+</html>
