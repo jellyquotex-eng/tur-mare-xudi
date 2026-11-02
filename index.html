@@ -1,721 +1,90 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="bn">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Portal hands - gesture-controlled camera effects</title>
-
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: { ink: '#08061a', panel: '#110c2a', edge: '#2b2257', neon: '#3df5ff', magenta: '#ff3df0', amber: '#ffb454' },
-        fontFamily: {
-          sans: ['Sora', 'system-ui', 'sans-serif'],
-          mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace']
-        }
-      }
-    }
-  };
-</script>
-
-<!-- Google MediaPipe Hands (CDN) -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
-
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Location</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
-  html { color-scheme: dark; }
-  body { background: radial-gradient(1200px 600px at 80% -10%, rgba(255,61,240,.10), transparent 60%), radial-gradient(900px 500px at 0% 0%, rgba(61,245,255,.08), transparent 55%), #08061a; }
-  .fbtn { --c: #fff; border: 1px solid #2b2257; background: rgba(255,255,255,.03); transition: border-color .15s, box-shadow .15s, background .15s; }
-  .fbtn:hover { border-color: #4a3f8a; }
-  .fbtn[aria-pressed="true"] { border-color: var(--c); background: rgba(255,255,255,.07); box-shadow: 0 0 0 1px var(--c) inset, 0 0 28px -10px var(--c); }
-  .fbtn:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid #3df5ff; outline-offset: 2px; }
-  input[type=range] { accent-color: #3df5ff; }
-  #log::-webkit-scrollbar { width: 6px; }
-  #log::-webkit-scrollbar-thumb { background: #2b2257; border-radius: 3px; }
-  kbd { font-family: 'IBM Plex Mono', monospace; font-size: 11px; border: 1px solid #2b2257; border-radius: 4px; padding: 0 5px; color: #9a94c8; }
+:root{--bg:#f3f6f4;--panel:#fff;--ink:#16211c;--mute:#5d6b64;--ok:#14804a;--warn:#b26a00;--bad:#c0392b;--line:#d9e1dc}
+@media(prefers-color-scheme:dark){:root{--bg:#10161a;--panel:#18211f;--ink:#e8f0ec;--mute:#93a39b;--ok:#4cc38a;--warn:#f0a63a;--bad:#ff7a6b;--line:#2a3733}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column}
+header{padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#dot{width:12px;height:12px;border-radius:50%;background:var(--bad)}
+#status{font-weight:700;font-size:17px}
+#meta{color:var(--mute);font-size:14px;flex:1 1 240px}
+#gm{background:var(--ink);color:var(--bg);text-decoration:none;padding:9px 14px;border-radius:6px;font-size:14px;font-weight:600}
+#gm[hidden]{display:none}
+#map{flex:1;min-height:300px}
+footer{padding:8px 16px;font-size:13px;color:var(--mute);background:var(--panel);border-top:1px solid var(--line)}
 </style>
 </head>
+<body>
+<header>
+  <span id="dot"></span>
+  <span id="status">Connecting...</span>
+  <span id="meta"></span>
+  <a id="gm" href="#" target="_blank" rel="noopener" hidden>Open in Google Maps</a>
+</header>
+<div id="map"></div>
+<footer id="foot">Updates every 3 seconds</footer>
 
-<body class="min-h-screen bg-ink font-sans text-slate-200 antialiased">
-<div class="mx-auto grid max-w-[1440px] gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_350px] lg:p-6">
-
-  <!-- ============ Stage ============ -->
-  <section class="min-w-0">
-    <header class="mb-4 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Portal hands</h1>
-        <p class="mt-1 text-sm text-slate-400">Frame the air with both hands to open a portal. Switch effects with one-hand gestures.</p>
-      </div>
-      <button id="stopBtn" class="hidden rounded-lg border border-edge px-3 py-2 text-sm text-slate-300 hover:border-slate-500">Stop camera</button>
-    </header>
-
-    <div id="stage" class="relative w-full overflow-hidden rounded-2xl border border-edge bg-black shadow-[0_0_90px_-35px_rgba(61,245,255,.45)]" style="aspect-ratio:16/9">
-      <video id="video" playsinline muted autoplay class="pointer-events-none absolute h-px w-px opacity-0"></video>
-      <canvas id="view" class="absolute inset-0 h-full w-full"></canvas>
-
-      <!-- HUD: status -->
-      <div class="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur">
-        <span id="dot" class="h-2 w-2 rounded-full" style="background:#64618a"></span>
-        <span id="statusText">Camera off</span>
-        <span id="fpsText" class="font-mono text-slate-400"></span>
-      </div>
-
-      <!-- HUD: active filter -->
-      <div class="pointer-events-none absolute right-3 top-3 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur">
-        <span class="text-slate-400">Effect</span>
-        <span id="badgeDot" class="h-2 w-2 rounded-full" style="background:#e6e4ff"></span>
-        <span id="badgeText" class="font-medium">Normal</span>
-      </div>
-
-      <!-- HUD: transient toast -->
-      <div class="pointer-events-none absolute inset-x-0 top-16 flex justify-center">
-        <span id="flashText" class="rounded-full border bg-black/70 px-4 py-1.5 text-sm font-medium opacity-0 backdrop-blur"></span>
-      </div>
-
-      <!-- HUD: readout + hint -->
-      <pre id="readout" class="pointer-events-none absolute bottom-16 left-3 hidden whitespace-pre rounded-lg bg-black/55 px-3 py-2 font-mono text-[11px] leading-5 text-slate-300 backdrop-blur sm:block"></pre>
-      <div id="hint" class="pointer-events-none absolute inset-x-3 bottom-3 rounded-lg bg-black/60 px-3 py-2 text-center text-sm text-slate-200 backdrop-blur">Start the camera to begin.</div>
-
-      <!-- Start overlay -->
-      <div id="overlay" class="absolute inset-0 grid place-items-center bg-ink/85 p-6 backdrop-blur-sm">
-        <div class="max-w-sm text-center">
-          <div class="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-neon/40 text-neon">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V4h7M24 11V4h-7M4 17v7h7M24 17v7h-7"/></svg>
-          </div>
-          <h2 class="text-xl font-semibold">Turn on your camera</h2>
-          <p class="mt-2 text-sm text-slate-400">Hand tracking runs inside your browser. Your video is never uploaded.</p>
-          <button id="startBtn" class="mt-5 rounded-xl bg-neon px-5 py-2.5 text-sm font-semibold text-ink hover:brightness-110 disabled:opacity-60">Start camera</button>
-          <p id="errorText" class="mt-4 hidden text-sm text-magenta"></p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ Sidebar ============ -->
-  <aside class="flex min-w-0 flex-col gap-4">
-
-    <div class="rounded-2xl border border-edge bg-panel/80 p-4">
-      <h2 class="mb-3 text-sm font-semibold">Effects</h2>
-      <div class="grid grid-cols-2 gap-2" id="filterButtons">
-        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="normal" style="--c:#e6e4ff"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#e6e4ff"></i>Normal</span><kbd>0</kbd></button>
-        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="neon" style="--c:#3df5ff"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#3df5ff"></i>Cyber neon</span><kbd>1</kbd></button>
-        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="negative" style="--c:#ff3df0"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#ff3df0"></i>Negative</span><kbd>2</kbd></button>
-        <button class="fbtn flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm" data-filter="thermal" style="--c:#ffb454"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full" style="background:#ffb454"></i>Thermal</span><kbd>3</kbd></button>
-      </div>
-    </div>
-
-    <div class="rounded-2xl border border-edge bg-panel/80 p-4">
-      <h2 class="mb-3 text-sm font-semibold">Gestures</h2>
-      <ul class="space-y-2.5 text-sm">
-        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">🤏</span><span><span class="font-medium">Pinch</span><span class="block text-xs text-slate-400">Thumb and index touch. Cyber neon.</span></span></li>
-        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">✌️</span><span><span class="font-medium">Peace sign</span><span class="block text-xs text-slate-400">Index and middle up. Negative.</span></span></li>
-        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">☝️</span><span><span class="font-medium">Point up</span><span class="block text-xs text-slate-400">Only the index finger. Thermal.</span></span></li>
-        <li class="flex items-center gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-lg">🖐️</span><span><span class="font-medium">Open palm</span><span class="block text-xs text-slate-400">All fingers spread. Back to normal.</span></span></li>
-        <li class="flex items-center gap-3 border-t border-edge pt-2.5"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-neon/40 text-neon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V3h5M17 12v5h-5"/></svg></span><span><span class="font-medium">Two L shapes</span><span class="block text-xs text-slate-400">Thumb and index out on both hands, as opposite corners of a frame. Two pinches as corners also work. Opens the portal.</span></span></li>
-      </ul>
-    </div>
-
-    <div class="rounded-2xl border border-edge bg-panel/80 p-4">
-      <h2 class="mb-3 text-sm font-semibold">Settings</h2>
-      <label class="flex items-center justify-between text-sm">
-        <span>Show hand skeleton</span>
-        <input id="skelToggle" type="checkbox" checked class="h-4 w-4">
-      </label>
-      <div class="mt-4">
-        <div class="flex items-center justify-between text-sm"><label for="holdRange">Hold time to switch</label><span id="holdVal" class="font-mono text-xs text-slate-400">500 ms</span></div>
-        <input id="holdRange" type="range" min="300" max="1200" step="50" value="500" class="mt-2 w-full">
-      </div>
-    </div>
-
-    <div class="flex min-h-[200px] flex-1 flex-col rounded-2xl border border-edge bg-panel/80 p-4">
-      <h2 class="mb-3 text-sm font-semibold">Activity</h2>
-      <ul id="log" class="max-h-64 flex-1 space-y-1.5 overflow-y-auto pr-1 font-mono text-xs leading-5 text-slate-300"></ul>
-    </div>
-  </aside>
-</div>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-(() => {
-  'use strict';
+// ====== SHUDHU EI LINE ta bodlao ======
+const DB_URL = "https://my-website-ctg-default-rtdb.firebaseio.com";
+// =====================================
 
-  /* ---------------------------------------------------------------
-   * Config
-   * ------------------------------------------------------------- */
-  const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/';
+const LIVE_MAX_SEC = 90;   // ei somoyer moddhe update na ashle "Last known"
+const map = L.map('map').setView([21.4272, 92.0058], 5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
+let marker = null, firstFix = true;
 
-  const FILTERS = {
-    normal:   { label: 'Normal',     color: '#e6e4ff' },
-    neon:     { label: 'Cyber neon', color: '#3df5ff' },
-    negative: { label: 'Negative',   color: '#ff3df0' },
-    thermal:  { label: 'Thermal',    color: '#ffb454' }
-  };
-  const FILTER_KEYS = { '0': 'normal', '1': 'neon', '2': 'negative', '3': 'thermal' };
-  const GESTURE_TO_FILTER = { pinch: 'neon', peace: 'negative', point: 'thermal', palm: 'normal' };
-  const GNAME = { pinch: 'Pinch', peace: 'Peace sign', point: 'Point up', palm: 'Open palm', L: 'L shape', fist: 'Fist', other: 'Unknown' };
-  const LOG_COLORS = { system: '#8b86b8', gesture: '#3df5ff', filter: '#ff3df0', portal: '#ffb454' };
+const $ = id => document.getElementById(id);
+function setStatus(text, color){
+  $('status').textContent = text;
+  $('status').style.color = color;
+  $('dot').style.background = color;
+}
+function ago(s){
+  if(s < 60) return s + " sec age";
+  if(s < 3600) return Math.floor(s/60) + " min age";
+  return Math.floor(s/3600) + " hour age";
+}
 
-  const CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
-  const TIPS = [4, 8, 12, 16, 20];
-
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  /* ---------------------------------------------------------------
-   * DOM + state
-   * ------------------------------------------------------------- */
-  const $ = s => document.querySelector(s);
-  const video = $('#video'), view = $('#view'), ctx = view.getContext('2d');
-  const stage = $('#stage');
-  const work = document.createElement('canvas'), wctx = work.getContext('2d', { willReadFrequently: true });
-  const fx = document.createElement('canvas'), fctx = fx.getContext('2d');
-
-  const S = {
-    running: false, busy: false, stream: null, mp: null,
-    vw: 1280, vh: 720, ww: 640, wh: 360,
-    landmarks: [], resultAt: 0, lastVT: -1, detCount: 0, detFps: 0, fpsAt: 0,
-    tracked: [],
-    filter: 'normal', hold: 500, skeleton: true,
-    track: newTrack(), cnt: { cand: 0, shown: 0, since: 0 },
-    last: 0
-  };
-  const portal = { on: false, openT: 0, rect: null, lastSeen: 0, particles: [] };
-
-  function newTrack() { return { g: null, since: 0, lastSeen: 0, fired: false, logged: false, hand: null }; }
-
-  /* ---------------------------------------------------------------
-   * Small helpers
-   * ------------------------------------------------------------- */
-  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-  const ease = t => 1 - Math.pow(1 - t, 3);
-  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
-  function hexA(h, a) { const n = parseInt(h.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${clamp01(a)})`; }
-  function setText(el, v) { if (el._v !== v) { el.textContent = v; el._v = v; } }
-  function rr(c, x, y, w, h, r) {
-    r = Math.max(0, Math.min(r, w / 2, h / 2));
-    c.beginPath(); c.moveTo(x + r, y);
-    c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
-    c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
-  }
-
-  const els = {
-    dot: $('#dot'), status: $('#statusText'), fps: $('#fpsText'), badgeDot: $('#badgeDot'), badgeText: $('#badgeText'),
-    hint: $('#hint'), readout: $('#readout'), log: $('#log'), flash: $('#flashText'),
-    overlay: $('#overlay'), startBtn: $('#startBtn'), stopBtn: $('#stopBtn'), err: $('#errorText')
-  };
-
-  function log(kind, msg) {
-    const li = document.createElement('li');
-    const t = new Date().toLocaleTimeString([], { hour12: false });
-    const ts = document.createElement('span'); ts.className = 'text-slate-500'; ts.textContent = t + ' ';
-    const dot = document.createElement('span'); dot.style.color = LOG_COLORS[kind] || '#fff'; dot.textContent = '\u25CF ';
-    const tx = document.createElement('span'); tx.textContent = msg;
-    li.append(ts, dot, tx);
-    els.log.prepend(li);
-    while (els.log.children.length > 40) els.log.lastChild.remove();
-  }
-
-  function setStatus(kind, text) {
-    const colors = { idle: '#64618a', loading: '#ffb454', ok: '#3df5ff', warn: '#ff3df0' };
-    els.dot.style.background = colors[kind] || colors.idle;
-    setText(els.status, text);
-  }
-
-  function flash(text, color) {
-    els.flash.textContent = text;
-    els.flash.style.color = color; els.flash.style.borderColor = color;
-    if (reduceMotion) return;
-    els.flash.animate([
-      { opacity: 0, transform: 'translateY(8px) scale(.96)' },
-      { opacity: 1, transform: 'none', offset: .15 },
-      { opacity: 1, transform: 'none', offset: .7 },
-      { opacity: 0, transform: 'translateY(-4px)' }
-    ], { duration: 1500, easing: 'ease-out' });
-  }
-
-  function setFilter(name, source) {
-    if (!FILTERS[name]) return;
-    S.filter = name;
-    const f = FILTERS[name];
-    document.querySelectorAll('#filterButtons .fbtn').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === name)));
-    els.badgeDot.style.background = f.color;
-    setText(els.badgeText, f.label);
-    log('filter', `${f.label} on (${source})`);
-    flash(f.label, f.color);
-  }
-
-  /* ---------------------------------------------------------------
-   * Pixel filters (run on a downscaled working canvas)
-   * ------------------------------------------------------------- */
-  const HEAT = (() => {
-    const stops = [[0, [6, 0, 36]], [.22, [48, 6, 140]], [.42, [170, 12, 130]], [.6, [245, 70, 20]], [.8, [255, 190, 20]], [1, [255, 250, 215]]];
-    const lut = new Uint8ClampedArray(256 * 3);
-    for (let i = 0; i < 256; i++) {
-      const t = i / 255; let s = 0;
-      while (s < stops.length - 2 && t > stops[s + 1][0]) s++;
-      const [t0, c0] = stops[s], [t1, c1] = stops[s + 1];
-      const k = clamp01((t - t0) / (t1 - t0));
-      for (let c = 0; c < 3; c++) lut[i * 3 + c] = c0[c] + (c1[c] - c0[c]) * k;
+async function tick(){
+  try{
+    const r = await fetch(DB_URL + "/location.json?_=" + Date.now(), {cache:"no-store"});
+    const d = await r.json();
+    if(!d || typeof d.lat !== "number"){
+      setStatus("Device theke data ashe ni", "var(--bad)");
+      $('meta').textContent = "ESP32 on kore GPS fix er opekkha korun.";
+      return;
     }
-    return lut;
-  })();
+    const pos = [d.lat, d.lng];
+    if(!marker) marker = L.circleMarker(pos,{radius:9,weight:3,color:"#fff",fillColor:"#1a73e8",fillOpacity:1}).addTo(map);
+    marker.setLatLng(pos);
+    if(firstFix){ map.setView(pos, 17); firstFix = false; }
+    else if(!map.getBounds().contains(pos)) map.panTo(pos);
 
-  let gray = new Uint8ClampedArray(0), colM = new Float32Array(0);
-
-  function fxNegative(img) {
-    const d = img.data;
-    for (let p = 0; p < d.length; p += 4) { d[p] = 255 - d[p]; d[p + 1] = 255 - d[p + 1]; d[p + 2] = 255 - d[p + 2]; }
+    const age = d.ts ? Math.max(0, Math.round(Date.now()/1000 - d.ts/1000)) : null;
+    const live = d.live && (age === null || age < LIVE_MAX_SEC);
+    setStatus(live ? "LIVE location" : "Last known location", live ? "var(--ok)" : "var(--warn)");
+    $('meta').textContent = d.lat.toFixed(6)+", "+d.lng.toFixed(6)+
+      " | Sat: "+(d.sats||0)+" | Speed: "+(d.speed||0).toFixed(1)+" km/h"+
+      (age!==null ? " | "+ago(age) : "");
+    $('gm').href = "https://www.google.com/maps?q="+d.lat+","+d.lng;
+    $('gm').hidden = false;
+    $('foot').textContent = "Updates every 3 seconds";
+  }catch(e){
+    setStatus("Internet / database connection nai", "var(--bad)");
+    $('foot').textContent = "DB_URL thik ache kina ar internet check korun.";
   }
-
-  function fxThermal(img) {
-    const d = img.data;
-    for (let p = 0; p < d.length; p += 4) {
-      let l = ((d[p] * 77 + d[p + 1] * 150 + d[p + 2] * 29) >> 8);
-      l = Math.min(255, Math.max(0, (l - 20) * 1.3)) | 0;
-      const i = l * 3;
-      d[p] = HEAT[i]; d[p + 1] = HEAT[i + 1]; d[p + 2] = HEAT[i + 2];
-    }
-  }
-
-  function fxNeon(img, w, h, t) {
-    const d = img.data, n = w * h;
-    if (gray.length < n) gray = new Uint8ClampedArray(n);
-    for (let i = 0, p = 0; i < n; i++, p += 4) gray[i] = (d[p] * 77 + d[p + 1] * 150 + d[p + 2] * 29) >> 8;
-    if (colM.length < w) colM = new Float32Array(w);
-    const ph = t * 0.0015;
-    for (let x = 0; x < w; x++) colM[x] = 0.5 + 0.5 * Math.sin(x * 0.045 + ph);
-    for (let y = 0; y < h; y++) {
-      const r0 = Math.max(0, y - 1) * w, r1 = y * w, r2 = Math.min(h - 1, y + 1) * w;
-      const sl = (y & 3) === 0 ? 0.8 : 1;
-      for (let x = 0; x < w; x++) {
-        const xl = x > 0 ? x - 1 : 0, xr = x < w - 1 ? x + 1 : x;
-        const a = gray[r0 + xl], b = gray[r0 + x], c = gray[r0 + xr];
-        const dl = gray[r1 + xl], dr = gray[r1 + xr];
-        const g = gray[r2 + xl], hh = gray[r2 + x], i2 = gray[r2 + xr];
-        const gx = (c + 2 * dr + i2) - (a + 2 * dl + g);
-        const gy = (g + 2 * hh + i2) - (a + 2 * b + c);
-        let k = (Math.abs(gx) + Math.abs(gy) - 40) / 200; k = k < 0 ? 0 : k > 1 ? 1 : k;
-        const L = gray[r1 + x], m = colM[x], p = (r1 + x) * 4;
-        const er = 61 + 194 * m, eg = 245 - 184 * m, eb = 255 - 15 * m;
-        d[p]     = (10 + L * 0.42 + er * k * 1.1) * sl;
-        d[p + 1] = (5 + L * 0.10 + eg * k * 1.1) * sl;
-        d[p + 2] = (30 + L * 0.60 + eb * k * 1.1) * sl;
-      }
-    }
-  }
-
-  function applyFilter(img, w, h, name, t) {
-    if (name === 'neon') fxNeon(img, w, h, t);
-    else if (name === 'negative') fxNegative(img);
-    else if (name === 'thermal') fxThermal(img);
-  }
-
-  /* ---------------------------------------------------------------
-   * Gesture classification
-   * ------------------------------------------------------------- */
-  function classify(p) {
-    const scale = dist(p[0], p[9]) || 1;
-    const ext = (tip, pip) => dist(p[tip], p[0]) > dist(p[pip], p[0]) * 1.15;
-    const idx = ext(8, 6), mid_ = ext(12, 10), rng = ext(16, 14), pnk = ext(20, 18);
-    const thumbOut = dist(p[4], p[5]) / scale;
-    const pinch = dist(p[4], p[8]) / scale;
-    let g;
-    if (pinch < 0.3) g = 'pinch';
-    else if (idx && mid_ && rng && pnk) g = 'palm';
-    else if (idx && mid_ && !rng && !pnk) g = 'peace';
-    else if (idx && !mid_ && !rng && !pnk) g = thumbOut > 0.72 ? 'L' : 'point';
-    else if (!idx && !mid_ && !rng && !pnk) g = 'fist';
-    else g = 'other';
-    return { g, scale, pinch };
-  }
-
-  function portalTarget(hands) {
-    if (hands.length < 2) return null;
-    const [a, b] = hands;
-    let pts;
-    if (a.g === 'L' && b.g === 'L') pts = [a.p[4], a.p[8], b.p[4], b.p[8]];
-    else if (a.g === 'pinch' && b.g === 'pinch') pts = [mid(a.p[4], a.p[8]), mid(b.p[4], b.p[8])];
-    else return null;
-    const xs = pts.map(q => q.x), ys = pts.map(q => q.y);
-    const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs) - x, h = Math.max(...ys) - y;
-    if (w < S.vw * 0.12 || h < S.vh * 0.12) return null;
-    return { x, y, w, h };
-  }
-
-  function analyze(now) {
-    const lms = (now - S.resultAt < 400) ? S.landmarks : [];
-    S.tracked = lms.map(l => {
-      const p = l.map(pt => ({ x: (1 - pt.x) * S.vw, y: pt.y * S.vh })); // mirrored to match the display
-      const c = { x: (p[0].x + p[5].x + p[17].x) / 3, y: (p[0].y + p[5].y + p[17].y) / 3 };
-      return { p, c, ...classify(p) };
-    }).sort((a, b) => a.c.x - b.c.x);
-
-    // Log hand-count changes once they are stable
-    const n = S.tracked.length, C = S.cnt;
-    if (n !== C.cand) { C.cand = n; C.since = now; }
-    else if (n !== C.shown && now - C.since > 500) {
-      C.shown = n;
-      log('system', n ? `${n} hand${n > 1 ? 's' : ''} in view` : 'Hands left the view');
-    }
-  }
-
-  /* ---------------------------------------------------------------
-   * Portal state
-   * ------------------------------------------------------------- */
-  function updatePortal(target, now, dt) {
-    if (target) {
-      portal.lastSeen = now;
-      if (!portal.on) {
-        portal.on = true; portal.rect = { ...target };
-        log('portal', `Portal opened, ${Math.round(target.w)} x ${Math.round(target.h)} px`);
-      } else {
-        const k = 1 - Math.exp(-dt / 70);
-        for (const key of ['x', 'y', 'w', 'h']) portal.rect[key] += (target[key] - portal.rect[key]) * k;
-      }
-    } else if (portal.on && now - portal.lastSeen > 350) {
-      portal.on = false;
-      log('portal', 'Portal closed');
-    }
-    portal.openT = Math.min(1, Math.max(0, portal.openT + (portal.on ? dt / 450 : -dt / 250)));
-    if (portal.openT === 0) portal.particles.length = 0;
-  }
-
-  /* ---------------------------------------------------------------
-   * Hold-to-switch logic
-   * ------------------------------------------------------------- */
-  function updateHold(now) {
-    const pick = portal.on ? null : S.tracked.find(h => GESTURE_TO_FILTER[h.g]);
-    const T = S.track;
-    if (pick) {
-      if (T.g === pick.g) { T.lastSeen = now; T.hand = pick; }
-      else if (!T.g || now - T.lastSeen > 160) S.track = { g: pick.g, since: now, lastSeen: now, fired: false, logged: false, hand: pick };
-    } else if (T.g && now - T.lastSeen > 160) {
-      S.track = newTrack();
-    }
-    const A = S.track;
-    if (A.g) {
-      const held = now - A.since;
-      if (!A.logged && held > 250) { A.logged = true; log('gesture', `${GNAME[A.g]} detected`); }
-      if (!A.fired && held >= S.hold) {
-        A.fired = true;
-        const f = GESTURE_TO_FILTER[A.g];
-        if (f !== S.filter) setFilter(f, GNAME[A.g].toLowerCase());
-      }
-    }
-  }
-
-  /* ---------------------------------------------------------------
-   * Rendering
-   * ------------------------------------------------------------- */
-  function drawMirroredVideo(c, w, h) {
-    c.save(); c.translate(w, 0); c.scale(-1, 1); c.drawImage(video, 0, 0, w, h); c.restore();
-  }
-
-  function render(now, dt) {
-    const W = S.vw, H = S.vh, k = S.ww / W;
-    const pvis = portal.openT > 0.01 && portal.rect;
-    let r = null, pf = null, e = 0;
-
-    if (pvis) {
-      e = ease(portal.openT);
-      const pr = portal.rect, sc = 0.55 + 0.45 * e, w = pr.w * sc, h = pr.h * sc;
-      r = { x: pr.x + pr.w / 2 - w / 2, y: pr.y + pr.h / 2 - h / 2, w, h };
-      pf = S.filter === 'normal' ? 'neon' : S.filter;
-
-      drawMirroredVideo(ctx, W, H);
-      ctx.fillStyle = `rgba(6,4,20,${0.55 * e})`; ctx.fillRect(0, 0, W, H);
-
-      // filter only the region inside the portal
-      drawMirroredVideo(wctx, S.ww, S.wh);
-      const rx = Math.max(0, Math.floor(r.x * k)), ry = Math.max(0, Math.floor(r.y * k));
-      const rw = Math.min(S.ww - rx, Math.ceil(r.w * k) + 1), rh = Math.min(S.wh - ry, Math.ceil(r.h * k) + 1);
-      if (rw > 2 && rh > 2) {
-        const img = wctx.getImageData(rx, ry, rw, rh);
-        applyFilter(img, rw, rh, pf, now);
-        fctx.putImageData(img, rx, ry);
-        ctx.save();
-        rr(ctx, r.x, r.y, r.w, r.h, 16 * (W / 1280)); ctx.clip();
-        ctx.drawImage(fx, rx, ry, rw, rh, rx / k, ry / k, rw / k, rh / k);
-        ctx.restore();
-      }
-    } else if (S.filter !== 'normal') {
-      drawMirroredVideo(wctx, S.ww, S.wh);
-      const img = wctx.getImageData(0, 0, S.ww, S.wh);
-      applyFilter(img, S.ww, S.wh, S.filter, now);
-      wctx.putImageData(img, 0, 0);
-      ctx.drawImage(work, 0, 0, W, H);
-    } else {
-      drawMirroredVideo(ctx, W, H);
-    }
-
-    if (pvis) drawPortal(r, e, now, dt, FILTERS[pf].color, pf);
-    if (S.skeleton) S.tracked.forEach(drawHand);
-    drawHold(now);
-  }
-
-  function drawPortal(r, e, now, dt, color, pf) {
-    const u = S.vw / 1280, rad = 16 * u;
-    ctx.save();
-
-    // inner glow + scan line, clipped to the frame
-    ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, rad); ctx.clip();
-    ctx.shadowColor = color; ctx.shadowBlur = 50 * u;
-    ctx.strokeStyle = hexA(color, 0.35 * e); ctx.lineWidth = 36 * u;
-    rr(ctx, r.x, r.y, r.w, r.h, rad); ctx.stroke();
-    if (!reduceMotion) {
-      ctx.shadowBlur = 0;
-      const sy = r.y + ((now * 0.00035) % 1) * r.h;
-      const g = ctx.createLinearGradient(0, sy - 30 * u, 0, sy + 30 * u);
-      g.addColorStop(0, hexA(color, 0)); g.addColorStop(0.5, hexA(color, 0.32)); g.addColorStop(1, hexA(color, 0));
-      ctx.fillStyle = g; ctx.fillRect(r.x, sy - 30 * u, r.w, 60 * u);
-    }
-    ctx.restore();
-
-    // glowing border
-    ctx.shadowColor = color; ctx.shadowBlur = 28 * u;
-    ctx.strokeStyle = color; ctx.lineWidth = (3 + (1 - e) * 8) * u;
-    rr(ctx, r.x, r.y, r.w, r.h, rad); ctx.stroke(); ctx.stroke();
-
-    // marching dashed inner border
-    ctx.shadowBlur = 0;
-    ctx.setLineDash([14 * u, 12 * u]); ctx.lineDashOffset = -now * 0.04 * u;
-    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5 * u;
-    rr(ctx, r.x + 10 * u, r.y + 10 * u, r.w - 20 * u, r.h - 20 * u, Math.max(2, rad - 6 * u)); ctx.stroke();
-    ctx.setLineDash([]);
-
-    // corner brackets
-    const L = Math.min(r.w, r.h) * 0.14;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 6 * u; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.shadowColor = color; ctx.shadowBlur = 20 * u;
-    [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]].forEach(([x, y, dx, dy]) => {
-      ctx.beginPath(); ctx.moveTo(x + dx * L, y); ctx.lineTo(x, y); ctx.lineTo(x, y + dy * L); ctx.stroke();
-    });
-    ctx.restore();
-
-    // sparks drifting off the edge
-    if (!reduceMotion) stepParticles(r, e, dt, color, u);
-
-    // label tab
-    const fs = Math.max(12, 14 * u);
-    const text = `portal \u00B7 ${FILTERS[pf].label.toLowerCase()} \u00B7 ${Math.round(r.w)}\u00D7${Math.round(r.h)}`;
-    ctx.save();
-    ctx.font = `500 ${fs}px "IBM Plex Mono", ui-monospace, monospace`;
-    const tw = ctx.measureText(text).width, ph = fs + 12 * u, pw = tw + 22 * u;
-    const ly = r.y > ph + 14 * u ? r.y - ph - 8 * u : r.y + 14 * u;
-    const lx = r.x + (r.y > ph + 14 * u ? 0 : 14 * u);
-    ctx.globalAlpha = e;
-    rr(ctx, lx, ly, pw, ph, ph / 2); ctx.fillStyle = 'rgba(8,6,26,.85)'; ctx.fill();
-    ctx.strokeStyle = color; ctx.lineWidth = 1.5 * u; ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(text, lx + 11 * u, ly + ph / 2 + 1);
-    ctx.restore();
-  }
-
-  function stepParticles(r, e, dt, color, u) {
-    const P = portal.particles;
-    const spawn = Math.round(2 * e);
-    for (let i = 0; i < spawn && P.length < 140; i++) {
-      let s = Math.random() * 2 * (r.w + r.h), x, y, nx = 0, ny = 0;
-      if (s < r.w) { x = r.x + s; y = r.y; ny = -1; }
-      else if ((s -= r.w) < r.h) { x = r.x + r.w; y = r.y + s; nx = 1; }
-      else if ((s -= r.h) < r.w) { x = r.x + r.w - s; y = r.y + r.h; ny = 1; }
-      else { s -= r.w; x = r.x; y = r.y + r.h - s; nx = -1; }
-      const sp = (0.03 + Math.random() * 0.07) * u;
-      P.push({ x, y, vx: nx * sp + (Math.random() - .5) * 0.02 * u, vy: ny * sp + (Math.random() - .5) * 0.02 * u, life: 1, decay: 1 / (700 + Math.random() * 700), size: (1.5 + Math.random() * 2.5) * u });
-    }
-    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.shadowBlur = 10 * u;
-    for (let i = P.length - 1; i >= 0; i--) {
-      const p = P[i];
-      p.x += p.vx * dt; p.y += p.vy * dt; p.life -= p.decay * dt;
-      if (p.life <= 0) { P.splice(i, 1); continue; }
-      ctx.fillStyle = hexA(color, p.life);
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  function drawHand(h) {
-    const u = S.vw / 1280, p = h.p;
-    ctx.save(); ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(61,245,255,.6)'; ctx.lineWidth = 2.5 * u;
-    ctx.shadowColor = '#3df5ff'; ctx.shadowBlur = 8 * u;
-    ctx.beginPath();
-    CONN.forEach(([a, b]) => { ctx.moveTo(p[a].x, p[a].y); ctx.lineTo(p[b].x, p[b].y); });
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    for (let i = 0; i < 21; i++) {
-      const tip = TIPS.includes(i);
-      ctx.fillStyle = tip ? '#ffffff' : 'rgba(61,245,255,.9)';
-      ctx.beginPath(); ctx.arc(p[i].x, p[i].y, (tip ? 5 : 3) * u, 0, Math.PI * 2); ctx.fill();
-    }
-    if (h.g === 'pinch') {
-      const m = mid(p[4], p[8]);
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5 * u;
-      ctx.beginPath(); ctx.arc(m.x, m.y, 14 * u, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawHold(now) {
-    const T = S.track;
-    if (!T.g || !T.hand || now - T.lastSeen > 160) return;
-    const f = GESTURE_TO_FILTER[T.g], col = FILTERS[f].color, h = T.hand, u = S.vw / 1280;
-    const R = Math.max(30 * u, h.scale * 0.95);
-    const prog = T.fired ? 1 : Math.min(1, (now - T.since) / S.hold);
-    ctx.save(); ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.arc(h.c.x, h.c.y, R, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 5 * u; ctx.stroke();
-    ctx.beginPath(); ctx.arc(h.c.x, h.c.y, R, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
-    ctx.strokeStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 18 * u; ctx.lineWidth = 5 * u;
-    ctx.globalAlpha = T.fired ? 0.45 : 1; ctx.stroke();
-    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-    ctx.font = `600 ${Math.max(12, 15 * u)}px Sora, system-ui, sans-serif`; ctx.textAlign = 'center';
-    const label = `${GNAME[T.g]} for ${FILTERS[f].label}`;
-    ctx.lineWidth = 4 * u; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.strokeText(label, h.c.x, h.c.y + R + 24 * u);
-    ctx.fillStyle = col; ctx.fillText(label, h.c.x, h.c.y + R + 24 * u);
-    ctx.restore();
-  }
-
-  /* ---------------------------------------------------------------
-   * HUD text
-   * ------------------------------------------------------------- */
-  function updateHud() {
-    const n = S.tracked.length;
-    if (n) setStatus('ok', `Tracking ${n} hand${n > 1 ? 's' : ''}`); else setStatus('warn', 'No hands in view');
-    setText(els.fps, `${S.detFps} fps`);
-
-    let hint;
-    if (!n) hint = 'Show one or both hands to the camera.';
-    else if (portal.on) hint = 'Portal open. Move your hands to resize it, or lower them to close it.';
-    else if (n >= 2) hint = 'Make an L with each hand, or pinch with both, to open a portal.';
-    else hint = `Hold a pinch, peace sign, point or open palm for ${(S.hold / 1000).toFixed(2).replace(/0$/, '')} seconds to switch effects.`;
-    setText(els.hint, hint);
-
-    const lines = S.tracked.map((h, i) => `Hand ${i + 1}  ${GNAME[h.g]}  (pinch ${h.pinch.toFixed(2)})`);
-    if (portal.on && portal.rect) lines.push(`Portal  ${Math.round(portal.rect.w)} \u00D7 ${Math.round(portal.rect.h)}`);
-    setText(els.readout, lines.join('\n') || 'No hands');
-    els.readout.style.display = lines.length ? '' : 'none';
-  }
-
-  /* ---------------------------------------------------------------
-   * Main loop
-   * ------------------------------------------------------------- */
-  function frame(now) {
-    if (!S.running) return;
-    const dt = Math.min(64, now - S.last); S.last = now;
-
-    if (!S.busy && video.readyState >= 2 && video.currentTime !== S.lastVT) {
-      S.lastVT = video.currentTime; S.busy = true;
-      S.mp.send({ image: video }).catch(err => console.error(err)).finally(() => { S.busy = false; });
-    }
-    if (now - S.fpsAt >= 1000) { S.detFps = S.detCount; S.detCount = 0; S.fpsAt = now; }
-
-    analyze(now);
-    updatePortal(portalTarget(S.tracked), now, dt);
-    updateHold(now);
-    render(now, dt);
-    updateHud();
-    requestAnimationFrame(frame);
-  }
-
-  function onResults(res) {
-    S.landmarks = res.multiHandLandmarks || [];
-    S.resultAt = performance.now();
-    S.detCount++;
-  }
-
-  /* ---------------------------------------------------------------
-   * Camera lifecycle
-   * ------------------------------------------------------------- */
-  function showError(msg) {
-    els.err.textContent = msg; els.err.classList.remove('hidden');
-    els.startBtn.disabled = false; els.startBtn.textContent = 'Try again';
-    els.overlay.classList.remove('hidden');
-    setStatus('warn', 'Camera unavailable');
-  }
-
-  async function start() {
-    els.err.classList.add('hidden');
-    els.startBtn.disabled = true; els.startBtn.textContent = 'Starting camera\u2026';
-    setStatus('loading', 'Starting camera');
-    try {
-      if (typeof Hands === 'undefined') throw Object.assign(new Error('mp'), { name: 'MediaPipeMissing' });
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('ctx'), { name: 'InsecureContext' });
-
-      S.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false });
-      video.srcObject = S.stream;
-      await video.play();
-
-      S.vw = video.videoWidth || 1280; S.vh = video.videoHeight || 720;
-      view.width = S.vw; view.height = S.vh;
-      stage.style.aspectRatio = `${S.vw} / ${S.vh}`;
-      S.ww = Math.min(640, S.vw); S.wh = Math.round(S.ww * S.vh / S.vw);
-      work.width = fx.width = S.ww; work.height = fx.height = S.wh;
-
-      els.startBtn.textContent = 'Loading hand model\u2026'; setStatus('loading', 'Loading hand model');
-      if (!S.mp) {
-        S.mp = new Hands({ locateFile: f => MP_BASE + f });
-        S.mp.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5, selfieMode: false });
-        S.mp.onResults(onResults);
-        await S.mp.initialize();
-      }
-
-      S.landmarks = []; S.tracked = []; S.track = newTrack(); S.lastVT = -1;
-      S.cnt = { cand: 0, shown: 0, since: performance.now() };
-      portal.on = false; portal.openT = 0; portal.particles.length = 0;
-      S.running = true; S.last = S.fpsAt = performance.now();
-      els.overlay.classList.add('hidden'); els.stopBtn.classList.remove('hidden');
-      log('system', `Camera ready, ${S.vw} \u00D7 ${S.vh}`);
-      requestAnimationFrame(frame);
-    } catch (err) {
-      console.error(err);
-      if (S.stream) { S.stream.getTracks().forEach(t => t.stop()); S.stream = null; }
-      const msgs = {
-        NotAllowedError: 'Camera permission was denied. Allow camera access in the address bar, then try again.',
-        NotFoundError: 'No camera was found. Connect one and try again.',
-        NotReadableError: 'The camera is in use by another app. Close it and try again.',
-        InsecureContext: 'Camera access needs a secure page. Open this file through https:// or http://localhost.',
-        MediaPipeMissing: 'The hand-tracking library did not load. Check your internet connection and reload.'
-      };
-      showError(msgs[err.name] || `Could not start: ${err.message || err.name}`);
-    }
-  }
-
-  function stop() {
-    S.running = false;
-    if (S.stream) S.stream.getTracks().forEach(t => t.stop());
-    S.stream = null; video.srcObject = null;
-    ctx.clearRect(0, 0, view.width, view.height);
-    portal.on = false; portal.openT = 0;
-    els.overlay.classList.remove('hidden'); els.stopBtn.classList.add('hidden');
-    els.startBtn.disabled = false; els.startBtn.textContent = 'Start camera';
-    setStatus('idle', 'Camera off'); setText(els.fps, '');
-    setText(els.hint, 'Start the camera to begin.'); els.readout.style.display = 'none';
-    log('system', 'Camera stopped');
-  }
-
-  /* ---------------------------------------------------------------
-   * Controls
-   * ------------------------------------------------------------- */
-  els.startBtn.addEventListener('click', start);
-  els.stopBtn.addEventListener('click', stop);
-  document.querySelectorAll('#filterButtons .fbtn').forEach(b => b.addEventListener('click', () => { if (b.dataset.filter !== S.filter) setFilter(b.dataset.filter, 'button'); }));
-  window.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT' || e.ctrlKey || e.metaKey || e.altKey) return;
-    const f = FILTER_KEYS[e.key];
-    if (f && f !== S.filter) setFilter(f, 'keyboard');
-  });
-  $('#skelToggle').addEventListener('change', e => { S.skeleton = e.target.checked; });
-  $('#holdRange').addEventListener('input', e => { S.hold = +e.target.value; $('#holdVal').textContent = `${S.hold} ms`; });
-
-  // initial UI state
-  document.querySelector('#filterButtons [data-filter="normal"]').setAttribute('aria-pressed', 'true');
-  log('system', 'Ready. Start the camera to begin.');
-})();
+}
+tick(); setInterval(tick, 3000);
 </script>
 </body>
 </html>
